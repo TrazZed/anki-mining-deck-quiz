@@ -5,6 +5,7 @@ import time
 import pygame
 from html.parser import HTMLParser
 import threading
+from queue import Queue
 
 ANKI_CONNECT_URL = "http://localhost:8765"
 
@@ -139,10 +140,21 @@ class VocabGameGUI:
         self.cards = cards
         self.current_index = 0
         self.score = 0
+        self.points = 0  # Total points earned
         self.total = 0
+        self.streak = 0  # Current correct answer streak
         self.current_info = None
         self.animating = False
         self.game_over = False
+        self.can_skip = False  # Can skip animation with Enter
+        self.question_start_time = None  # Track when question was displayed
+        self.last_points_earned = 0  # Points earned on last answer
+        
+        # Card preloading queue
+        self.ready_cards = Queue()
+        self.preload_count = 10  # Number of cards to keep preloaded
+        self.loading = True
+        self.fetch_thread = None
         
         # Create window
         self.width = 600
@@ -220,49 +232,63 @@ class VocabGameGUI:
         # Clock for frame rate
         self.clock = pygame.time.Clock()
         
+        # Start background card loading
+        self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
+        self.fetch_thread.start()
+        
         # Load first word
         self.load_next_word()
     
-    def load_next_word(self):
-        """Load the next word from the deck."""
-        if self.current_index >= len(self.cards):
-            self.show_final_score()
-            return
+    def _preload_cards(self):
+        """Background thread to preload cards from Jisho."""
+        while self.current_index < len(self.cards) and self.loading:
+            # Keep queue filled with preloaded cards
+            if self.ready_cards.qsize() < self.preload_count:
+                card = self.cards[self.current_index]
+                word = strip_html(card['question'])
+                info = get_jisho_info(word)
+                
+                if info and info['reading']:
+                    self.ready_cards.put(info)
+                    print(f"Preloaded card {self.current_index + 1}/{len(self.cards)}: {info['word']}")
+                
+                self.current_index += 1
+            else:
+                # Queue is full, wait a bit before checking again
+                time.sleep(0.1)
         
-        self.status_text = "Looking up word..."
+        self.loading = False
+    
+    def load_next_word(self):
+        """Load the next word from the preloaded queue."""
+        # Reset UI state
         self.feedback_text = ""
         self.meaning_text = ""
         self.input_text = ""
         self.composition = ""
         self.input_active = False
-        self.word_text = "Loading..."
         self.word_color = self.text_color
         
-        # Load word in background thread
-        threading.Thread(target=self._fetch_word_info, daemon=True).start()
-    
-    def _fetch_word_info(self):
-        """Fetch word info from Jisho in background."""
-        while self.current_index < len(self.cards):
-            card = self.cards[self.current_index]
-            word = strip_html(card['question'])
-            info = get_jisho_info(word)
-            
-            if info and info['reading']:
-                self.current_info = info
-                self._display_word()
-                break
-            else:
-                self.current_index += 1
-        
-        if self.current_index >= len(self.cards):
+        # Try to get a preloaded card
+        if not self.ready_cards.empty():
+            self.current_info = self.ready_cards.get()
+            self._display_word()
+        elif not self.loading:
+            # No more cards available and loading is done
             self.show_final_score()
+        else:
+            # Still loading, show loading message
+            self.status_text = "Loading cards..."
+            self.word_text = "Please wait..."
+            # Check again in a moment
+            threading.Timer(0.5, self.load_next_word).start()
     
     def _display_word(self):
         """Display the word in the UI."""
         self.word_text = self.current_info['word']
         self.status_text = ""
         self.input_active = True
+        self.question_start_time = time.time()  # Start timing the question
     
     def check_answer(self):
         """Check if the user's answer is correct."""
@@ -271,21 +297,48 @@ class VocabGameGUI:
         
         self.animating = True
         self.input_active = False
+        self.can_skip = True  # Allow skipping to next card
         
         correct_reading = self.current_info['reading']
         self.total += 1
         
+        # Calculate time taken
+        time_taken = time.time() - self.question_start_time
+        
         if self.input_text.strip() == correct_reading:
             self.score += 1
+            self.streak += 1
+            
+            # Calculate points based on speed (max 100 points for <2s, decreasing to 10 points)
+            if time_taken < 2:
+                base_points = 100
+            elif time_taken < 4:
+                base_points = 75
+            elif time_taken < 6:
+                base_points = 50
+            elif time_taken < 10:
+                base_points = 25
+            else:
+                base_points = 10
+            
+            # Apply streak multiplier (1.0x to 3.0x based on streak)
+            streak_multiplier = min(1.0 + (self.streak - 1) * 0.1, 3.0)
+            points_earned = int(base_points * streak_multiplier)
+            
+            self.points += points_earned
+            self.last_points_earned = points_earned
+            
             self.animate_correct()
         else:
+            self.streak = 0  # Reset streak on wrong answer
+            self.last_points_earned = 0
             self.animate_incorrect(correct_reading)
     
     def animate_correct(self):
         """Animate correct answer."""
         self.animation_type = 'correct'
         self.animation_start = pygame.time.get_ticks()
-        self.feedback_text = "✓ Correct!"
+        self.feedback_text = f"✓ Correct! +{self.last_points_earned} pts"
         self.feedback_color = self.correct_color
         self.word_color = self.correct_color
         
@@ -348,7 +401,7 @@ class VocabGameGUI:
         self.animating = False
         self.animation_type = None
         self.shake_offset = 0
-        self.current_index += 1
+        self.can_skip = False
         self.load_next_word()
     
     def show_final_score(self):
@@ -359,7 +412,8 @@ class VocabGameGUI:
         self.feedback_text = ""
         self.meaning_text = ""
         percentage = int(self.score / self.total * 100) if self.total > 0 else 0
-        self.status_text = f"Final Score: {self.score}/{self.total} ({percentage}%)"
+        avg_points = int(self.points / self.total) if self.total > 0 else 0
+        self.status_text = f"Score: {self.score}/{self.total} ({percentage}%) | Total Points: {self.points} | Avg: {avg_points} pts/card"
         self.input_active = False
     
     def draw_text_wrapped(self, text, font, color, y_pos, max_width=500):
@@ -390,15 +444,24 @@ class VocabGameGUI:
         # Clear screen
         self.screen.fill(self.bg_color)
         
-        # Draw score
-        score_text = f"Score: {self.score}/{self.total}"
+        # Draw score and points
+        score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
         score_surface = self.score_font.render(score_text, True, self.text_color)
-        score_rect = score_surface.get_rect(center=(self.width // 2, 30))
+        score_rect = score_surface.get_rect(center=(self.width // 2, 20))
         self.screen.blit(score_surface, score_rect)
+        
+        # Draw streak
+        if self.streak > 0:
+            streak_text = f"🔥 Streak: {self.streak}x"
+            streak_color = self.correct_color if self.streak >= 5 else self.text_color
+            streak_surface = self.score_font.render(streak_text, True, streak_color)
+            streak_rect = streak_surface.get_rect(center=(self.width // 2, 45))
+            self.screen.blit(streak_surface, streak_rect)
         
         # Draw word (with shake offset)
         word_surface = self.word_font.render(self.word_text, True, self.word_color)
-        word_rect = word_surface.get_rect(center=(self.width // 2 + self.shake_offset, 100))
+        word_y = 115 if self.streak > 0 else 100
+        word_rect = word_surface.get_rect(center=(self.width // 2 + self.shake_offset, word_y))
         self.screen.blit(word_surface, word_rect)
         
         # Draw feedback
@@ -476,10 +539,14 @@ class VocabGameGUI:
                     if self.game_over:
                         continue
                     
-                    if self.input_active and not self.animating:
-                        if event.key == pygame.K_RETURN:
+                    if event.key == pygame.K_RETURN:
+                        if self.input_active and not self.animating:
                             self.check_answer()
-                        elif event.key == pygame.K_BACKSPACE:
+                        elif self.can_skip and self.animating:
+                            # Skip animation and go to next word
+                            self.next_word()
+                    elif self.input_active and not self.animating:
+                        if event.key == pygame.K_BACKSPACE:
                             self.input_text = self.input_text[:-1]
                             print(f"Input: {self.input_text}")  # Debug output
                 
