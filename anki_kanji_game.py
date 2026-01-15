@@ -13,6 +13,12 @@ import math
 
 ANKI_CONNECT_URL = "http://localhost:8765"
 
+# Game states
+STATE_MENU = 'menu'
+STATE_PLAYING = 'playing'
+STATE_LEADERBOARD = 'leaderboard'
+STATE_GAME_OVER = 'game_over'
+
 # Initialize pygame
 pygame.init()
 pygame.mixer.init()
@@ -259,6 +265,10 @@ class VocabGameGUI:
         self.question_start_time = None  # Track when question was displayed
         self.last_points_earned = 0  # Points earned on last answer
         
+        # Game state
+        self.state = STATE_MENU
+        self.high_scores = []
+        
         # Particle system
         self.particles = []
         self.background_time = 0
@@ -337,9 +347,19 @@ class VocabGameGUI:
         # Enable text input for IME support
         pygame.key.start_text_input()
         
-        # Button
+        # Buttons
         self.button_rect = pygame.Rect(200, 330, 200, 50)
         self.button_hover = False
+        
+        # Menu buttons
+        self.play_button = pygame.Rect(200, 200, 200, 60)
+        self.leaderboard_button = pygame.Rect(200, 280, 200, 60)
+        self.back_button = pygame.Rect(200, 400, 200, 50)
+        self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
+        self.play_button_hover = False
+        self.leaderboard_button_hover = False
+        self.back_button_hover = False
+        self.leave_button_hover = False
         
         # Animation state
         self.feedback_text = ""
@@ -358,9 +378,6 @@ class VocabGameGUI:
         # Start background card loading
         self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
         self.fetch_thread.start()
-        
-        # Load first word
-        self.load_next_word()
     
     def _preload_cards(self):
         """Background thread to preload cards from Jisho."""
@@ -381,6 +398,28 @@ class VocabGameGUI:
                 time.sleep(0.1)
         
         self.loading = False
+    
+    def start_game(self):
+        """Start a new game."""
+        self.state = STATE_PLAYING
+        self.score = 0
+        self.points = 0
+        self.total = 0
+        self.streak = 0
+        self.animating = False
+        self.game_over = False
+        self.load_next_word()
+    
+    def leave_game(self):
+        """Leave the current game and save score."""
+        if self.total > 0:  # Only save if at least one question was answered
+            percentage = int(self.score / self.total * 100)
+            avg_points = int(self.points / self.total)
+            save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
+        
+        self.state = STATE_MENU
+        self.animating = False
+        self.game_over = False
     
     def load_next_word(self):
         """Load the next word from the preloaded queue."""
@@ -559,6 +598,7 @@ class VocabGameGUI:
     
     def show_final_score(self):
         """Show the final score."""
+        self.state = STATE_GAME_OVER
         self.game_over = True
         self.word_text = "Game Over!"
         self.word_color = self.text_color
@@ -600,7 +640,106 @@ class VocabGameGUI:
             self.screen.blit(text_surface, text_rect)
     
     def draw(self):
-        """Draw the UI."""
+        """Draw the UI based on current state."""
+        if self.state == STATE_MENU:
+            self.draw_menu()
+        elif self.state == STATE_LEADERBOARD:
+            self.draw_leaderboard()
+        elif self.state == STATE_PLAYING:
+            self.draw_game()
+        elif self.state == STATE_GAME_OVER:
+            self.draw_game_over()
+        
+        pygame.display.flip()
+    
+    def draw_menu(self):
+        """Draw the main menu."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(10 * math.sin(self.background_time * 0.5))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw background particles
+        for i in range(5):
+            x = (self.background_time * 20 + i * 120) % self.width
+            y = 50 + i * 80
+            alpha = int(50 + 30 * math.sin(self.background_time + i))
+            s = pygame.Surface((4, 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
+            self.screen.blit(s, (x, y))
+        
+        # Title
+        title_font = pygame.font.Font(None, 64)
+        title = title_font.render("Japanese Vocab Quiz", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, 100))
+        self.screen.blit(title, title_rect)
+        
+        # Subtitle (using Japanese-capable font)
+        subtitle_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 20)
+        subtitle = subtitle_font.render("日本語語彙クイズ", True, self.gray_color)
+        subtitle_rect = subtitle.get_rect(center=(self.width // 2, 140))
+        self.screen.blit(subtitle, subtitle_rect)
+        
+        # Play button
+        play_color = self.button_hover_color if self.play_button_hover else self.button_color
+        pygame.draw.rect(self.screen, play_color, self.play_button, border_radius=10)
+        play_text = self.meaning_font.render("▶ Play", True, (255, 255, 255))
+        play_text_rect = play_text.get_rect(center=self.play_button.center)
+        self.screen.blit(play_text, play_text_rect)
+        
+        # Leaderboard button
+        lb_color = self.button_hover_color if self.leaderboard_button_hover else self.button_color
+        pygame.draw.rect(self.screen, lb_color, self.leaderboard_button, border_radius=10)
+        lb_text = self.meaning_font.render("🏆 Leaderboard", True, (255, 255, 255))
+        lb_text_rect = lb_text.get_rect(center=self.leaderboard_button.center)
+        self.screen.blit(lb_text, lb_text_rect)
+    
+    def draw_leaderboard(self):
+        """Draw the leaderboard screen."""
+        self.screen.fill(self.bg_color)
+        
+        # Title
+        title_font = pygame.font.Font(None, 48)
+        title = title_font.render("🏆 Leaderboard 🏆", True, (255, 215, 0))
+        title_rect = title.get_rect(center=(self.width // 2, 50))
+        self.screen.blit(title, title_rect)
+        
+        # Get and display high scores
+        if not self.high_scores:
+            self.high_scores = get_high_scores()
+        
+        if self.high_scores:
+            y_start = 120
+            for i, hs in enumerate(self.high_scores[:10], 1):
+                # Rank
+                rank_color = self.correct_color if i <= 3 else self.text_color
+                rank_text = f"{i}."
+                rank_surface = self.meaning_font.render(rank_text, True, rank_color)
+                self.screen.blit(rank_surface, (100, y_start + i * 35))
+                
+                # Score details
+                score_text = f"{hs['points']} pts  |  {hs['percentage']}%  |  {hs['date']}"
+                score_surface = self.meaning_font.render(score_text, True, self.text_color)
+                self.screen.blit(score_surface, (140, y_start + i * 35))
+        else:
+            no_scores = self.meaning_font.render("No scores yet. Play to set a record!", True, self.gray_color)
+            no_scores_rect = no_scores.get_rect(center=(self.width // 2, 200))
+            self.screen.blit(no_scores, no_scores_rect)
+        
+        # Back button
+        back_color = self.button_hover_color if self.back_button_hover else self.button_color
+        pygame.draw.rect(self.screen, back_color, self.back_button, border_radius=10)
+        back_text = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
+        back_text_rect = back_text.get_rect(center=self.back_button.center)
+        self.screen.blit(back_text, back_text_rect)
+    
+    def draw_game(self):
+        """Draw the main game screen."""
         # Animated background
         base_color = self.bg_color
         wave = int(10 * math.sin(self.background_time * 0.5))
@@ -624,10 +763,17 @@ class VocabGameGUI:
         for particle in self.particles:
             particle.draw(self.screen)
         
+        # Draw leave button
+        leave_color = self.incorrect_color if self.leave_button_hover else self.status_color
+        pygame.draw.rect(self.screen, leave_color, self.leave_button, border_radius=5)
+        leave_text = self.score_font.render("Leave", True, (255, 255, 255))
+        leave_text_rect = leave_text.get_rect(center=self.leave_button.center)
+        self.screen.blit(leave_text, leave_text_rect)
+        
         # Draw score and points
         score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
         score_surface = self.score_font.render(score_text, True, self.text_color)
-        score_rect = score_surface.get_rect(center=(self.width // 2, 20))
+        score_rect = score_surface.get_rect(midleft=(10, 20))
         self.screen.blit(score_surface, score_rect)
         
         # Draw streak with fire particles
@@ -680,26 +826,6 @@ class VocabGameGUI:
             button_surface = self.meaning_font.render(button_text, True, (255, 255, 255))
             button_text_rect = button_surface.get_rect(center=self.button_rect.center)
             self.screen.blit(button_surface, button_text_rect)
-        else:
-            # Draw close button
-            close_button = pygame.Rect(200, 330, 200, 50)
-            button_color = self.button_hover_color if self.button_hover else self.button_color
-            pygame.draw.rect(self.screen, button_color, close_button, border_radius=5)
-            button_surface = self.meaning_font.render("Close", True, (255, 255, 255))
-            button_text_rect = button_surface.get_rect(center=close_button.center)
-            self.screen.blit(button_surface, button_text_rect)
-            
-            # Draw high scores
-            if hasattr(self, 'high_scores') and self.high_scores:
-                hs_y = 250
-                hs_title = self.meaning_font.render("🏆 High Scores 🏆", True, (255, 215, 0))
-                self.screen.blit(hs_title, hs_title.get_rect(center=(self.width // 2, hs_y)))
-                
-                for i, hs in enumerate(self.high_scores[:3], 1):
-                    hs_text = f"{i}. {hs['points']} pts ({hs['percentage']}%) - {hs['date']}"
-                    hs_surface = self.meaning_font.render(hs_text, True, self.text_color)
-                    hs_rect = hs_surface.get_rect(center=(self.width // 2, hs_y + 25 + i * 25))
-                    self.screen.blit(hs_surface, hs_rect)
         
         # Draw meanings
         if self.meaning_text:
@@ -710,8 +836,42 @@ class VocabGameGUI:
             status_surface = self.meaning_font.render(self.status_text, True, self.status_color)
             status_rect = status_surface.get_rect(center=(self.width // 2, 460))
             self.screen.blit(status_surface, status_rect)
+    
+    def draw_game_over(self):
+        """Draw the game over screen."""
+        self.screen.fill(self.bg_color)
         
-        pygame.display.flip()
+        # Title
+        title_font = pygame.font.Font(None, 64)
+        title = title_font.render("Game Over!", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, 80))
+        self.screen.blit(title, title_rect)
+        
+        # Final score
+        if self.status_text:
+            status_surface = self.meaning_font.render(self.status_text, True, self.status_color)
+            status_rect = status_surface.get_rect(center=(self.width // 2, 140))
+            self.screen.blit(status_surface, status_rect)
+        
+        # High scores
+        if hasattr(self, 'high_scores') and self.high_scores:
+            hs_y = 180
+            hs_title = self.meaning_font.render("🏆 High Scores 🏆", True, (255, 215, 0))
+            self.screen.blit(hs_title, hs_title.get_rect(center=(self.width // 2, hs_y)))
+            
+            for i, hs in enumerate(self.high_scores[:3], 1):
+                hs_text = f"{i}. {hs['points']} pts ({hs['percentage']}%) - {hs['date']}"
+                hs_surface = self.meaning_font.render(hs_text, True, self.text_color)
+                hs_rect = hs_surface.get_rect(center=(self.width // 2, hs_y + 25 + i * 25))
+                self.screen.blit(hs_surface, hs_rect)
+        
+        # Back to menu button
+        self.button_rect = pygame.Rect(200, 380, 200, 50)
+        button_color = self.button_hover_color if self.button_hover else self.button_color
+        pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=10)
+        button_surface = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
+        button_text_rect = button_surface.get_rect(center=self.button_rect.center)
+        self.screen.blit(button_surface, button_text_rect)
     
     def run(self):
         """Start the game loop."""
@@ -735,39 +895,34 @@ class VocabGameGUI:
                 
                 # Handle IME text input (for Japanese/other languages)
                 elif event.type == pygame.TEXTINPUT:
-                    if self.input_active and not self.animating:
+                    if self.state == STATE_PLAYING and self.input_active and not self.animating:
                         self.input_text += event.text
                         print(f"Input: {self.input_text}")  # Debug output
                 
                 # Handle IME composition (in-progress text)
                 elif event.type == pygame.TEXTEDITING:
-                    self.composition = event.text
-                    print(f"Composing: {self.composition}")  # Debug output
+                    if self.state == STATE_PLAYING:
+                        self.composition = event.text
+                        print(f"Composing: {self.composition}")  # Debug output
                 
                 elif event.type == pygame.KEYDOWN:
-                    if self.game_over:
-                        continue
-                    
-                    if event.key == pygame.K_RETURN:
-                        if self.input_active and not self.animating:
-                            self.check_answer()
-                        elif self.can_skip and self.animating:
-                            # Skip animation and go to next word
-                            self.next_word()
-                    elif self.input_active and not self.animating:
-                        if event.key == pygame.K_BACKSPACE:
-                            self.input_text = self.input_text[:-1]
-                            print(f"Input: {self.input_text}")  # Debug output
+                    if self.state == STATE_PLAYING:
+                        if event.key == pygame.K_RETURN:
+                            if self.input_active and not self.animating:
+                                self.check_answer()
+                            elif self.can_skip and self.animating:
+                                # Skip animation and go to next word
+                                self.next_word()
+                        elif self.input_active and not self.animating:
+                            if event.key == pygame.K_BACKSPACE:
+                                self.input_text = self.input_text[:-1]
+                                print(f"Input: {self.input_text}")  # Debug output
                 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
-                    if self.button_rect.collidepoint(event.pos):
-                        if self.game_over:
-                            running = False
-                        else:
-                            self.check_answer()
+                    self.handle_mouse_click(event.pos)
                 
                 elif event.type == pygame.MOUSEMOTION:
-                    self.button_hover = self.button_rect.collidepoint(event.pos)
+                    self.update_button_hover(event.pos)
             
             # Update animations
             self.update_animation()
@@ -776,6 +931,45 @@ class VocabGameGUI:
             self.draw()
         
         pygame.quit()
+    
+    def handle_mouse_click(self, pos):
+        """Handle mouse clicks based on current state."""
+        if self.state == STATE_MENU:
+            if self.play_button.collidepoint(pos):
+                self.start_game()
+            elif self.leaderboard_button.collidepoint(pos):
+                self.state = STATE_LEADERBOARD
+                self.high_scores = get_high_scores()
+        
+        elif self.state == STATE_LEADERBOARD:
+            if self.back_button.collidepoint(pos):
+                self.state = STATE_MENU
+        
+        elif self.state == STATE_PLAYING:
+            if self.button_rect.collidepoint(pos) and not self.animating:
+                self.check_answer()
+            elif self.leave_button.collidepoint(pos):
+                self.leave_game()
+        
+        elif self.state == STATE_GAME_OVER:
+            if self.button_rect.collidepoint(pos):
+                self.state = STATE_MENU
+    
+    def update_button_hover(self, pos):
+        """Update button hover states based on mouse position."""
+        if self.state == STATE_MENU:
+            self.play_button_hover = self.play_button.collidepoint(pos)
+            self.leaderboard_button_hover = self.leaderboard_button.collidepoint(pos)
+        
+        elif self.state == STATE_LEADERBOARD:
+            self.back_button_hover = self.back_button.collidepoint(pos)
+        
+        elif self.state == STATE_PLAYING:
+            self.button_hover = self.button_rect.collidepoint(pos)
+            self.leave_button_hover = self.leave_button.collidepoint(pos)
+        
+        elif self.state == STATE_GAME_OVER:
+            self.button_hover = self.button_rect.collidepoint(pos)
 
 if __name__ == "__main__":
     main()
