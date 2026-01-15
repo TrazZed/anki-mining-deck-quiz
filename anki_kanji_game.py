@@ -15,9 +15,57 @@ ANKI_CONNECT_URL = "http://localhost:8765"
 
 # Game states
 STATE_MENU = 'menu'
+STATE_COUNTDOWN = 'countdown'
 STATE_PLAYING = 'playing'
 STATE_LEADERBOARD = 'leaderboard'
 STATE_GAME_OVER = 'game_over'
+
+# Romaji to Hiragana conversion map
+ROMAJI_TO_HIRAGANA = {
+    # Vowels
+    'a': 'あ', 'i': 'い', 'u': 'う', 'e': 'え', 'o': 'お',
+    # K-series
+    'ka': 'か', 'ki': 'き', 'ku': 'く', 'ke': 'け', 'ko': 'こ',
+    'kya': 'きゃ', 'kyu': 'きゅ', 'kyo': 'きょ',
+    # G-series
+    'ga': 'が', 'gi': 'ぎ', 'gu': 'ぐ', 'ge': 'げ', 'go': 'ご',
+    'gya': 'ぎゃ', 'gyu': 'ぎゅ', 'gyo': 'ぎょ',
+    # S-series
+    'sa': 'さ', 'shi': 'し', 'su': 'す', 'se': 'せ', 'so': 'そ',
+    'sha': 'しゃ', 'shu': 'しゅ', 'sho': 'しょ',
+    # Z-series
+    'za': 'ざ', 'ji': 'じ', 'zu': 'ず', 'ze': 'ぜ', 'zo': 'ぞ',
+    'ja': 'じゃ', 'ju': 'じゅ', 'jo': 'じょ',
+    # T-series
+    'ta': 'た', 'chi': 'ち', 'tsu': 'つ', 'tu': 'つ', 'te': 'て', 'to': 'と',
+    'cha': 'ちゃ', 'chu': 'ちゅ', 'cho': 'ちょ',
+    # D-series
+    'da': 'だ', 'di': 'ぢ', 'du': 'づ', 'de': 'で', 'do': 'ど',
+    # N-series
+    'na': 'な', 'ni': 'に', 'nu': 'ぬ', 'ne': 'ね', 'no': 'の',
+    'nya': 'にゃ', 'nyu': 'にゅ', 'nyo': 'にょ',
+    # H-series
+    'ha': 'は', 'hi': 'ひ', 'fu': 'ふ', 'he': 'へ', 'ho': 'ほ',
+    'hya': 'ひゃ', 'hyu': 'ひゅ', 'hyo': 'ひょ',
+    # B-series
+    'ba': 'ば', 'bi': 'び', 'bu': 'ぶ', 'be': 'べ', 'bo': 'ぼ',
+    'bya': 'びゃ', 'byu': 'びゅ', 'byo': 'びょ',
+    # P-series
+    'pa': 'ぱ', 'pi': 'ぴ', 'pu': 'ぷ', 'pe': 'ぺ', 'po': 'ぽ',
+    'pya': 'ぴゃ', 'pyu': 'ぴゅ', 'pyo': 'ぴょ',
+    # M-series
+    'ma': 'ま', 'mi': 'み', 'mu': 'む', 'me': 'め', 'mo': 'も',
+    'mya': 'みゃ', 'myu': 'みゅ', 'myo': 'みょ',
+    # Y-series
+    'ya': 'や', 'yu': 'ゆ', 'yo': 'よ',
+    # R-series
+    'ra': 'ら', 'ri': 'り', 'ru': 'る', 're': 'れ', 'ro': 'ろ',
+    'rya': 'りゃ', 'ryu': 'りゅ', 'ryo': 'りょ',
+    # W-series
+    'wa': 'わ', 'wo': 'を',
+    # Special
+    'nn': 'ん',
+}
 
 # Initialize pygame
 pygame.init()
@@ -239,11 +287,12 @@ def main():
     print(f"Using deck: {deck_name}")
     card_ids = get_card_ids(deck_name)
     cards = get_cards_info(card_ids)
-    kanji_cards = [card for card in cards if contains_kanji(card['question'])]
+    # Filter for cards with kanji and exclude new cards (type 0 = new, type 1 = learning, type 2 = review)
+    kanji_cards = [card for card in cards if contains_kanji(card['question']) and card.get('type', 0) != 0]
     if not kanji_cards:
         print("No cards with kanji found in this deck.")
         return
-    print(f"Loaded {len(kanji_cards)} kanji cards.")
+    print(f"Loaded {len(kanji_cards)} kanji cards (excluding new cards).")
     random.shuffle(kanji_cards)
     
     # Launch GUI
@@ -268,6 +317,12 @@ class VocabGameGUI:
         # Game state
         self.state = STATE_MENU
         self.high_scores = []
+        self.countdown_start = 0
+        self.countdown_number = 3
+        
+        # Word zoom animation
+        self.word_zoom = 0.2  # 0.0 to 1.0
+        self.word_distance = 1.0  # How far away the word is
         
         # Particle system
         self.particles = []
@@ -290,8 +345,8 @@ class VocabGameGUI:
         self.fetch_thread = None
         
         # Create window
-        self.width = 600
-        self.height = 500
+        self.width = 800
+        self.height = 650
         self.screen = pygame.display.set_mode((self.width, self.height))
         pygame.display.set_caption("Japanese Vocabulary Quiz")
         
@@ -343,6 +398,7 @@ class VocabGameGUI:
         self.input_text = ""
         self.input_active = False
         self.composition = ""  # For IME composition text
+        self.romaji_buffer = ""  # Buffer for romaji to hiragana conversion
         
         # Enable text input for IME support
         pygame.key.start_text_input()
@@ -352,9 +408,9 @@ class VocabGameGUI:
         self.button_hover = False
         
         # Menu buttons
-        self.play_button = pygame.Rect(200, 200, 200, 60)
-        self.leaderboard_button = pygame.Rect(200, 280, 200, 60)
-        self.back_button = pygame.Rect(200, 400, 200, 50)
+        self.play_button = pygame.Rect(300, 250, 200, 60)
+        self.leaderboard_button = pygame.Rect(300, 330, 200, 60)
+        self.back_button = pygame.Rect(300, 500, 200, 50)
         self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.play_button_hover = False
         self.leaderboard_button_hover = False
@@ -401,14 +457,15 @@ class VocabGameGUI:
     
     def start_game(self):
         """Start a new game."""
-        self.state = STATE_PLAYING
+        self.state = STATE_COUNTDOWN
+        self.countdown_start = pygame.time.get_ticks()
+        self.countdown_number = 3
         self.score = 0
         self.points = 0
         self.total = 0
         self.streak = 0
         self.animating = False
         self.game_over = False
-        self.load_next_word()
     
     def leave_game(self):
         """Leave the current game and save score."""
@@ -428,8 +485,11 @@ class VocabGameGUI:
         self.meaning_text = ""
         self.input_text = ""
         self.composition = ""
+        self.romaji_buffer = ""
         self.input_active = False
         self.word_color = self.text_color
+        self.word_zoom = 0.2
+        self.word_distance = 1.0
         
         # Try to get a preloaded card
         if not self.ready_cards.empty():
@@ -451,6 +511,54 @@ class VocabGameGUI:
         self.status_text = ""
         self.input_active = True
         self.question_start_time = time.time()  # Start timing the question
+    
+    def convert_romaji_to_hiragana(self, romaji):
+        """Convert romaji text to hiragana."""
+        result = ""
+        i = 0
+        while i < len(romaji):
+            # Check for double consonants (small っ)
+            # If we have two identical consonants (except 'n'), convert first to っ
+            if i + 2 <= len(romaji):
+                current = romaji[i]
+                next_char = romaji[i+1]
+                # Check if it's a double consonant (not vowel, not 'n')
+                if (current == next_char and 
+                    current not in 'aeioun' and 
+                    current.isalpha()):
+                    result += 'っ'
+                    i += 1
+                    continue
+            
+            # Try 3-character combinations first
+            if i + 3 <= len(romaji):
+                three_char = romaji[i:i+3]
+                if three_char in ROMAJI_TO_HIRAGANA:
+                    result += ROMAJI_TO_HIRAGANA[three_char]
+                    i += 3
+                    continue
+            
+            # Try 2-character combinations
+            if i + 2 <= len(romaji):
+                two_char = romaji[i:i+2]
+                if two_char in ROMAJI_TO_HIRAGANA:
+                    result += ROMAJI_TO_HIRAGANA[two_char]
+                    i += 2
+                    continue
+            
+            # Try single character
+            if i + 1 <= len(romaji):
+                one_char = romaji[i:i+1]
+                if one_char in ROMAJI_TO_HIRAGANA:
+                    result += ROMAJI_TO_HIRAGANA[one_char]
+                    i += 1
+                    continue
+            
+            # If no match, keep the character as is
+            result += romaji[i]
+            i += 1
+        
+        return result
     
     def check_answer(self):
         """Check if the user's answer is correct."""
@@ -500,7 +608,6 @@ class VocabGameGUI:
         """Animate correct answer."""
         self.animation_type = 'correct'
         self.animation_start = pygame.time.get_ticks()
-        self.feedback_text = f"✓ Correct! +{self.last_points_earned} pts"
         self.feedback_color = self.correct_color
         self.word_color = self.correct_color
         
@@ -511,13 +618,13 @@ class VocabGameGUI:
             pygame.time.set_timer(pygame.USEREVENT + 1, 100, 1)
         
         # Create success particles
-        for _ in range(30):
-            x = random.randint(100, 500)
-            y = random.randint(100, 200)
-            vx = random.uniform(-100, 100)
-            vy = random.uniform(-150, -50)
+        for _ in range(50):
+            x = random.randint(0, self.width)
+            y = random.randint(0, self.height)
+            vx = random.uniform(-150, 150)
+            vy = random.uniform(-200, -50)
             color = self.correct_color
-            particle = Particle(x, y, color, vx, vy, random.uniform(0.5, 1.0), random.uniform(2, 5))
+            particle = Particle(x, y, color, vx, vy, random.uniform(0.5, 1.5), random.uniform(3, 8))
             self.particles.append(particle)
         
         # Show meanings
@@ -529,7 +636,7 @@ class VocabGameGUI:
         """Animate incorrect answer."""
         self.animation_type = 'incorrect'
         self.animation_start = pygame.time.get_ticks()
-        self.feedback_text = f"✗ Incorrect: {correct_reading}"
+        self.correct_answer_text = correct_reading
         self.feedback_color = self.incorrect_color
         self.word_color = self.incorrect_color
         
@@ -538,13 +645,13 @@ class VocabGameGUI:
             self.sound_incorrect.play()
         
         # Create failure particles
-        for _ in range(20):
-            x = random.randint(150, 450)
-            y = random.randint(100, 200)
-            vx = random.uniform(-50, 50)
-            vy = random.uniform(-100, -30)
+        for _ in range(40):
+            x = random.randint(0, self.width)
+            y = random.randint(0, self.height)
+            vx = random.uniform(-100, 100)
+            vy = random.uniform(-150, -30)
             color = self.incorrect_color
-            particle = Particle(x, y, color, vx, vy, random.uniform(0.4, 0.8), random.uniform(2, 4))
+            particle = Particle(x, y, color, vx, vy, random.uniform(0.4, 1.2), random.uniform(3, 6))
             self.particles.append(particle)
         
         # Show meanings
@@ -643,6 +750,8 @@ class VocabGameGUI:
         """Draw the UI based on current state."""
         if self.state == STATE_MENU:
             self.draw_menu()
+        elif self.state == STATE_COUNTDOWN:
+            self.draw_countdown()
         elif self.state == STATE_LEADERBOARD:
             self.draw_leaderboard()
         elif self.state == STATE_PLAYING:
@@ -699,6 +808,40 @@ class VocabGameGUI:
         lb_text_rect = lb_text.get_rect(center=self.leaderboard_button.center)
         self.screen.blit(lb_text, lb_text_rect)
     
+    def draw_countdown(self):
+        """Draw the countdown screen."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(15 * math.sin(self.background_time * 2))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Calculate countdown
+        elapsed = pygame.time.get_ticks() - self.countdown_start
+        self.countdown_number = 3 - (elapsed // 1000)
+        
+        if self.countdown_number <= 0:
+            self.state = STATE_PLAYING
+            self.load_next_word()
+            return
+        
+        # Draw countdown number with pulsing effect
+        pulse = 0.7 + 0.3 * math.sin(elapsed / 150)
+        countdown_font = pygame.font.Font(None, int(200 * pulse))
+        countdown_text = countdown_font.render(str(self.countdown_number), True, self.text_color)
+        countdown_rect = countdown_text.get_rect(center=(self.width // 2, self.height // 2))
+        self.screen.blit(countdown_text, countdown_rect)
+        
+        # Draw "Get Ready!" text
+        ready_font = pygame.font.Font(None, 36)
+        ready_text = ready_font.render("Get Ready!", True, self.gray_color)
+        ready_rect = ready_text.get_rect(center=(self.width // 2, self.height // 2 + 100))
+        self.screen.blit(ready_text, ready_rect)
+    
     def draw_leaderboard(self):
         """Draw the leaderboard screen."""
         self.screen.fill(self.bg_color)
@@ -740,24 +883,49 @@ class VocabGameGUI:
     
     def draw_game(self):
         """Draw the main game screen."""
-        # Animated background
+        # Streak-based background animation
         base_color = self.bg_color
-        wave = int(10 * math.sin(self.background_time * 0.5))
-        bg_color = (
-            max(0, min(255, base_color[0] + wave)),
-            max(0, min(255, base_color[1] + wave)),
-            max(0, min(255, base_color[2] + wave))
-        )
+        speed_multiplier = 1.0 + (self.streak * 0.6)  # Increased from 0.2 to 0.6
+        wave_intensity = 10 + (self.streak * 3)  # Increased from 2 to 3
+        wave = int(wave_intensity * math.sin(self.background_time * 0.5 * speed_multiplier))
+        
+        # Add color shift for high streaks
+        if self.streak >= 10:
+            bg_color = (
+                max(0, min(255, base_color[0] + wave + 20)),
+                max(0, min(255, base_color[1] + wave + 10)),
+                max(0, min(255, base_color[2] + wave))
+            )
+        elif self.streak >= 5:
+            bg_color = (
+                max(0, min(255, base_color[0] + wave + 10)),
+                max(0, min(255, base_color[1] + wave + 5)),
+                max(0, min(255, base_color[2] + wave))
+            )
+        else:
+            bg_color = (
+                max(0, min(255, base_color[0] + wave)),
+                max(0, min(255, base_color[1] + wave)),
+                max(0, min(255, base_color[2] + wave))
+            )
         self.screen.fill(bg_color)
         
-        # Draw background particles (subtle)
-        for i in range(5):
-            x = (self.background_time * 20 + i * 120) % self.width
-            y = 50 + i * 80
-            alpha = int(50 + 30 * math.sin(self.background_time + i))
-            s = pygame.Surface((4, 4), pygame.SRCALPHA)
-            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
-            self.screen.blit(s, (x, y))
+        # Draw background particles (more with higher streak)
+        particle_count = 5 + (self.streak * 4)  # More dramatic increase
+        for i in range(min(particle_count, 80)):  # 80 max
+            # Distribute particles across the screen with deterministic offset
+            base_x = (self.background_time * (30 + self.streak * 5) + i * 150) % (self.width + 100)
+            base_y = (i * 47) % self.height
+            # Add consistent pseudo-random offset using sine/cosine based on particle index
+            offset_x = 30 * math.sin(i * 2.7)  # Deterministic but looks random
+            offset_y = 25 * math.cos(i * 3.1)
+            x = base_x + offset_x
+            y = base_y + offset_y
+            alpha = int(50 + 30 * math.sin(self.background_time * speed_multiplier + i))
+            size = 3 + (self.streak * 0.2)  # Particles grow with streak
+            s = pygame.Surface((int(size * 2), int(size * 2)), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.text_color[:3], alpha), (int(size), int(size)), int(size))
+            self.screen.blit(s, (int(x), int(y)))
         
         # Draw active particles
         for particle in self.particles:
@@ -770,46 +938,67 @@ class VocabGameGUI:
         leave_text_rect = leave_text.get_rect(center=self.leave_button.center)
         self.screen.blit(leave_text, leave_text_rect)
         
-        # Draw score and points
-        score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
-        score_surface = self.score_font.render(score_text, True, self.text_color)
-        score_rect = score_surface.get_rect(midleft=(10, 20))
-        self.screen.blit(score_surface, score_rect)
+        # Draw score and points - PROMINENT
+        score_bg = pygame.Surface((250, 45), pygame.SRCALPHA)
+        score_bg.fill((0, 0, 0, 100))
+        self.screen.blit(score_bg, (10, 5))
+        
+        score_font_large = pygame.font.Font(None, 32)
+        score_text = f"{self.score}/{self.total}"
+        score_surface = score_font_large.render(score_text, True, self.text_color)
+        self.screen.blit(score_surface, (20, 10))
+        
+        points_text = f"+{self.points} pts"
+        points_surface = self.score_font.render(points_text, True, (255, 215, 0))
+        self.screen.blit(points_surface, (20, 35))
         
         # Draw streak with fire particles
         if self.streak > 0:
-            streak_text = f"🔥 Streak: {self.streak}x"
+            streak_bg = pygame.Surface((150, 35), pygame.SRCALPHA)
+            streak_bg.fill((0, 0, 0, 120))
+            streak_rect_bg = streak_bg.get_rect(center=(self.width // 2, 45))
+            self.screen.blit(streak_bg, streak_rect_bg)
+            
+            streak_font_large = pygame.font.Font(None, 36)
+            streak_text = f"🔥 {self.streak}x"
             streak_color = self.correct_color if self.streak >= 5 else self.text_color
-            streak_surface = self.score_font.render(streak_text, True, streak_color)
+            streak_surface = streak_font_large.render(streak_text, True, streak_color)
             streak_rect = streak_surface.get_rect(center=(self.width // 2, 45))
             self.screen.blit(streak_surface, streak_rect)
             
             # Add fire particles for high streaks
-            if self.streak >= 5 and random.random() < 0.3:
-                fire_x = streak_rect.left + random.randint(-10, 10)
-                fire_y = streak_rect.centery + random.randint(-5, 5)
+            if self.streak >= 5 and random.random() < 0.5:
+                fire_x = streak_rect.left + random.randint(-20, 20)
+                fire_y = streak_rect.centery + random.randint(-10, 10)
                 self.particles.append(FireParticle(fire_x, fire_y))
         
-        # Draw word (with shake offset)
-        word_surface = self.word_font.render(self.word_text, True, self.word_color)
-        word_y = 115 if self.streak > 0 else 100
+        # Update word zoom animation with smooth easing
+        if not self.animating and self.input_active:
+            self.word_zoom = min(1.0, self.word_zoom + 0.001)
+            # Ease-out effect for smoother animation
+            eased_zoom = 1.0 - math.pow(1.0 - self.word_zoom, 3)
+            self.word_distance = 1.0 - (eased_zoom * 0.5)
+        
+        # Draw word with zoom effect
+        base_size = 90
+        # Apply ease-out for smoother zoom
+        eased_zoom = 1.0 - math.pow(1.0 - self.word_zoom, 3)
+        zoom_factor = 0.2 + (eased_zoom * 0.8)  # Start at 20% size
+        word_size = int(base_size * zoom_factor)
+        word_font_zoom = pygame.font.SysFont(self.word_font.get_name() if hasattr(self.word_font, 'get_name') else 'msgothic', word_size)
+        word_surface = word_font_zoom.render(self.word_text, True, self.word_color)
+        word_y = 120 + int(40 * self.word_distance)
         word_rect = word_surface.get_rect(center=(self.width // 2 + self.shake_offset, word_y))
         self.screen.blit(word_surface, word_rect)
-        
-        # Draw feedback
-        if self.feedback_text:
-            feedback_surface = self.reading_font.render(self.feedback_text, True, self.feedback_color)
-            feedback_rect = feedback_surface.get_rect(center=(self.width // 2, 170))
-            self.screen.blit(feedback_surface, feedback_rect)
         
         if not self.game_over:
             # Draw "Reading:" label
             label_surface = self.meaning_font.render("Reading:", True, self.text_color)
-            label_rect = label_surface.get_rect(center=(self.width // 2, 220))
+            label_rect = label_surface.get_rect(center=(self.width // 2, 280))
             self.screen.blit(label_surface, label_rect)
             
             # Draw input box
-            input_rect = pygame.Rect(150, 240, 300, 40)
+            input_rect = pygame.Rect(250, 310, 300, 45)
             pygame.draw.rect(self.screen, (255, 255, 255), input_rect)
             pygame.draw.rect(self.screen, (0, 0, 0), input_rect, 2)
             
@@ -820,6 +1009,7 @@ class VocabGameGUI:
             self.screen.blit(input_surface, input_text_rect)
             
             # Draw button
+            self.button_rect = pygame.Rect(250, 380, 300, 50)
             button_color = self.button_hover_color if self.button_hover else self.button_color
             pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=5)
             button_text = "Submit"
@@ -829,13 +1019,40 @@ class VocabGameGUI:
         
         # Draw meanings
         if self.meaning_text:
-            self.draw_text_wrapped(self.meaning_text, self.meaning_font, self.meaning_color, 400)
+            self.draw_text_wrapped(self.meaning_text, self.meaning_font, self.meaning_color, 480)
         
         # Draw status
         if self.status_text:
             status_surface = self.meaning_font.render(self.status_text, True, self.status_color)
-            status_rect = status_surface.get_rect(center=(self.width // 2, 460))
+            status_rect = status_surface.get_rect(center=(self.width // 2, 600))
             self.screen.blit(status_surface, status_rect)
+        
+        # Show correct answer when incorrect (drawn late so it's on top)
+        if self.animating and self.animation_type == 'incorrect':
+            if hasattr(self, 'correct_answer_text'):
+                correct_label_font = pygame.font.Font(None, 32)
+                correct_label = correct_label_font.render("Correct:", True, self.text_color)
+                correct_label_rect = correct_label.get_rect(center=(self.width // 2, 520))
+                self.screen.blit(correct_label, correct_label_rect)
+                
+                correct_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 56)
+                correct_surface = correct_font.render(self.correct_answer_text, True, self.incorrect_color)
+                correct_rect = correct_surface.get_rect(center=(self.width // 2, 565))
+                self.screen.blit(correct_surface, correct_rect)
+        
+        # Full-screen flash animation on answer (drawn LAST to cover everything)
+        if self.animating and self.animation_type:
+            elapsed = pygame.time.get_ticks() - self.animation_start
+            if elapsed < 400:  # Flash for 400ms
+                # Create a brighter, more visible flash
+                flash_alpha = int(180 * (1.0 - elapsed / 400))
+                flash_surface = pygame.Surface((self.width, self.height))
+                if self.animation_type == 'correct':
+                    flash_surface.fill(self.correct_color)
+                else:
+                    flash_surface.fill(self.incorrect_color)
+                flash_surface.set_alpha(flash_alpha)
+                self.screen.blit(flash_surface, (0, 0))
     
     def draw_game_over(self):
         """Draw the game over screen."""
@@ -893,11 +1110,18 @@ class VocabGameGUI:
                     if self.sound_streak:
                         self.sound_streak.play()
                 
-                # Handle IME text input (for Japanese/other languages)
+                # Handle text input with romaji conversion
                 elif event.type == pygame.TEXTINPUT:
                     if self.state == STATE_PLAYING and self.input_active and not self.animating:
-                        self.input_text += event.text
-                        print(f"Input: {self.input_text}")  # Debug output
+                        # Check if it's already hiragana/katakana (from IME)
+                        if any('\u3040' <= c <= '\u30ff' for c in event.text):
+                            self.input_text += event.text
+                        else:
+                            # Add to romaji buffer
+                            self.romaji_buffer += event.text.lower()
+                            # Convert to hiragana
+                            self.input_text = self.convert_romaji_to_hiragana(self.romaji_buffer)
+                        print(f"Input: {self.input_text} (romaji: {self.romaji_buffer})")  # Debug output
                 
                 # Handle IME composition (in-progress text)
                 elif event.type == pygame.TEXTEDITING:
@@ -915,8 +1139,17 @@ class VocabGameGUI:
                                 self.next_word()
                         elif self.input_active and not self.animating:
                             if event.key == pygame.K_BACKSPACE:
-                                self.input_text = self.input_text[:-1]
-                                print(f"Input: {self.input_text}")  # Debug output
+                                if len(self.input_text) > 0:
+                                    # Remove last hiragana character
+                                    self.input_text = self.input_text[:-1]
+                                    # Rebuild romaji buffer to match the remaining hiragana
+                                    # Keep removing from romaji buffer until conversion matches
+                                    while len(self.romaji_buffer) > 0:
+                                        test_conversion = self.convert_romaji_to_hiragana(self.romaji_buffer)
+                                        if test_conversion == self.input_text:
+                                            break
+                                        self.romaji_buffer = self.romaji_buffer[:-1]
+                                print(f"Input: {self.input_text} (romaji: {self.romaji_buffer})")  # Debug output
                 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     self.handle_mouse_click(event.pos)
