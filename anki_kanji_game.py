@@ -2,9 +2,14 @@ import requests
 import random
 import re
 import time
+import pygame
 from html.parser import HTMLParser
+import threading
 
 ANKI_CONNECT_URL = "http://localhost:8765"
+
+# Initialize pygame
+pygame.init()
 
 # Utility to call AnkiConnect
 
@@ -123,43 +128,381 @@ def main():
         print("No cards with kanji found in this deck.")
         return
     print(f"Loaded {len(kanji_cards)} kanji cards.")
-    score = 0
-    total = 0
     random.shuffle(kanji_cards)
     
-    for card in kanji_cards:
-        word = strip_html(card['question'])
+    # Launch GUI
+    app = VocabGameGUI(kanji_cards)
+    app.run()
+
+class VocabGameGUI:
+    def __init__(self, cards):
+        self.cards = cards
+        self.current_index = 0
+        self.score = 0
+        self.total = 0
+        self.current_info = None
+        self.animating = False
+        self.game_over = False
         
-        # Look up word in Jisho
-        print("\nLooking up word in dictionary...")
-        info = get_jisho_info(word)
+        # Create window
+        self.width = 600
+        self.height = 500
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        pygame.display.set_caption("Japanese Vocabulary Quiz")
         
-        if not info or not info['reading']:
-            print(f"Could not find '{word}' in dictionary. Skipping...")
-            time.sleep(0.5)
-            continue
+        # Colors
+        self.bg_color = (44, 62, 80)  # #2C3E50
+        self.text_color = (236, 240, 241)  # #ECF0F1
+        self.correct_color = (46, 204, 113)  # #2ECC71
+        self.incorrect_color = (231, 76, 60)  # #E74C3C
+        self.button_color = (52, 152, 219)  # #3498DB
+        self.button_hover_color = (41, 128, 185)  # #2980B9
+        self.gray_color = (189, 195, 199)  # #BDC3C7
+        self.status_color = (149, 165, 166)  # #95A5A6
         
-        total += 1
-        print("\n" + "="*50)
-        print(f"Word: {info['word']}")
+        # Fonts - try multiple Japanese fonts
+        japanese_fonts = ['msgothic', 'meiryo', 'yugothic', 'msgothic', 'msmincho', 'Arial Unicode MS']
         
-        # Ask for reading
-        answer = input("\nEnter reading (hiragana): ").strip()
+        self.word_font = None
+        for font_name in japanese_fonts:
+            try:
+                self.word_font = pygame.font.SysFont(font_name, 72)
+                # Test if it can render hiragana
+                test = self.word_font.render('あ', True, (255, 255, 255))
+                if test.get_width() > 0:
+                    break
+            except:
+                continue
         
-        if answer == info['reading']:
-            print("✓ Correct!")
-            score += 1
+        if not self.word_font:
+            self.word_font = pygame.font.Font(None, 72)
+        
+        self.reading_font = None
+        for font_name in japanese_fonts:
+            try:
+                self.reading_font = pygame.font.SysFont(font_name, 32)
+                # Test if it can render hiragana
+                test = self.reading_font.render('あ', True, (0, 0, 0))
+                if test.get_width() > 0:
+                    break
+            except:
+                continue
+        
+        if not self.reading_font:
+            self.reading_font = pygame.font.Font(None, 32)
+        
+        self.meaning_font = pygame.font.Font(None, 24)
+        self.score_font = pygame.font.Font(None, 20)
+        
+        # Input state
+        self.input_text = ""
+        self.input_active = False
+        self.composition = ""  # For IME composition text
+        
+        # Enable text input for IME support
+        pygame.key.start_text_input()
+        
+        # Button
+        self.button_rect = pygame.Rect(200, 330, 200, 50)
+        self.button_hover = False
+        
+        # Animation state
+        self.feedback_text = ""
+        self.feedback_color = self.text_color
+        self.word_color = self.text_color
+        self.meaning_text = ""
+        self.meaning_color = self.gray_color
+        self.status_text = ""
+        self.animation_start = 0
+        self.animation_type = None  # 'correct', 'incorrect', or None
+        self.shake_offset = 0
+        
+        # Clock for frame rate
+        self.clock = pygame.time.Clock()
+        
+        # Load first word
+        self.load_next_word()
+    
+    def load_next_word(self):
+        """Load the next word from the deck."""
+        if self.current_index >= len(self.cards):
+            self.show_final_score()
+            return
+        
+        self.status_text = "Looking up word..."
+        self.feedback_text = ""
+        self.meaning_text = ""
+        self.input_text = ""
+        self.composition = ""
+        self.input_active = False
+        self.word_text = "Loading..."
+        self.word_color = self.text_color
+        
+        # Load word in background thread
+        threading.Thread(target=self._fetch_word_info, daemon=True).start()
+    
+    def _fetch_word_info(self):
+        """Fetch word info from Jisho in background."""
+        while self.current_index < len(self.cards):
+            card = self.cards[self.current_index]
+            word = strip_html(card['question'])
+            info = get_jisho_info(word)
+            
+            if info and info['reading']:
+                self.current_info = info
+                self._display_word()
+                break
+            else:
+                self.current_index += 1
+        
+        if self.current_index >= len(self.cards):
+            self.show_final_score()
+    
+    def _display_word(self):
+        """Display the word in the UI."""
+        self.word_text = self.current_info['word']
+        self.status_text = ""
+        self.input_active = True
+    
+    def check_answer(self):
+        """Check if the user's answer is correct."""
+        if self.animating or not self.current_info or not self.input_text.strip():
+            return
+        
+        self.animating = True
+        self.input_active = False
+        
+        correct_reading = self.current_info['reading']
+        self.total += 1
+        
+        if self.input_text.strip() == correct_reading:
+            self.score += 1
+            self.animate_correct()
         else:
-            print(f"✗ Incorrect. The reading is: {info['reading']}")
+            self.animate_incorrect(correct_reading)
+    
+    def animate_correct(self):
+        """Animate correct answer."""
+        self.animation_type = 'correct'
+        self.animation_start = pygame.time.get_ticks()
+        self.feedback_text = "✓ Correct!"
+        self.feedback_color = self.correct_color
+        self.word_color = self.correct_color
         
         # Show meanings
-        if info['meanings']:
-            print(f"\nMeaning(s): {', '.join(info['meanings'])}")
-        
-        time.sleep(1)  # Avoid hammering Jisho.org
+        if self.current_info['meanings']:
+            self.meaning_text = "Meanings: " + ", ".join(self.current_info['meanings'])
+            self.meaning_color = self.correct_color
     
-    print("\n" + "="*50)
-    print(f"Game over! Your score: {score}/{total}")
+    def animate_incorrect(self, correct_reading):
+        """Animate incorrect answer."""
+        self.animation_type = 'incorrect'
+        self.animation_start = pygame.time.get_ticks()
+        self.feedback_text = f"✗ Incorrect: {correct_reading}"
+        self.feedback_color = self.incorrect_color
+        self.word_color = self.incorrect_color
+        
+        # Show meanings
+        if self.current_info['meanings']:
+            self.meaning_text = "Meanings: " + ", ".join(self.current_info['meanings'])
+            self.meaning_color = self.incorrect_color
+    
+    def update_animation(self):
+        """Update animation state."""
+        if not self.animating:
+            return
+        
+        elapsed = pygame.time.get_ticks() - self.animation_start
+        
+        if self.animation_type == 'correct':
+            # Flash animation
+            if elapsed < 200:
+                self.word_color = self.correct_color
+            elif elapsed < 400:
+                self.word_color = self.text_color
+            elif elapsed < 600:
+                self.word_color = self.correct_color
+            else:
+                self.word_color = self.text_color
+            
+            # End animation and move to next word
+            if elapsed > 2000:
+                self.next_word()
+        
+        elif self.animation_type == 'incorrect':
+            # Shake animation
+            if elapsed < 400:
+                shake_sequence = [10, -10, 8, -8, 5, -5, 0]
+                index = min(int(elapsed / 50), len(shake_sequence) - 1)
+                self.shake_offset = shake_sequence[index]
+            else:
+                self.shake_offset = 0
+                self.word_color = self.text_color
+            
+            # End animation and move to next word
+            if elapsed > 3000:
+                self.next_word()
+    
+    def next_word(self):
+        """Move to the next word."""
+        self.animating = False
+        self.animation_type = None
+        self.shake_offset = 0
+        self.current_index += 1
+        self.load_next_word()
+    
+    def show_final_score(self):
+        """Show the final score."""
+        self.game_over = True
+        self.word_text = "Game Over!"
+        self.word_color = self.text_color
+        self.feedback_text = ""
+        self.meaning_text = ""
+        percentage = int(self.score / self.total * 100) if self.total > 0 else 0
+        self.status_text = f"Final Score: {self.score}/{self.total} ({percentage}%)"
+        self.input_active = False
+    
+    def draw_text_wrapped(self, text, font, color, y_pos, max_width=500):
+        """Draw text with word wrapping."""
+        words = text.split(' ')
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            if font.size(test_line)[0] <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        for i, line in enumerate(lines):
+            text_surface = font.render(line, True, color)
+            text_rect = text_surface.get_rect(center=(self.width // 2, y_pos + i * 25))
+            self.screen.blit(text_surface, text_rect)
+    
+    def draw(self):
+        """Draw the UI."""
+        # Clear screen
+        self.screen.fill(self.bg_color)
+        
+        # Draw score
+        score_text = f"Score: {self.score}/{self.total}"
+        score_surface = self.score_font.render(score_text, True, self.text_color)
+        score_rect = score_surface.get_rect(center=(self.width // 2, 30))
+        self.screen.blit(score_surface, score_rect)
+        
+        # Draw word (with shake offset)
+        word_surface = self.word_font.render(self.word_text, True, self.word_color)
+        word_rect = word_surface.get_rect(center=(self.width // 2 + self.shake_offset, 100))
+        self.screen.blit(word_surface, word_rect)
+        
+        # Draw feedback
+        if self.feedback_text:
+            feedback_surface = self.reading_font.render(self.feedback_text, True, self.feedback_color)
+            feedback_rect = feedback_surface.get_rect(center=(self.width // 2, 170))
+            self.screen.blit(feedback_surface, feedback_rect)
+        
+        if not self.game_over:
+            # Draw "Reading:" label
+            label_surface = self.meaning_font.render("Reading:", True, self.text_color)
+            label_rect = label_surface.get_rect(center=(self.width // 2, 220))
+            self.screen.blit(label_surface, label_rect)
+            
+            # Draw input box
+            input_rect = pygame.Rect(150, 240, 300, 40)
+            pygame.draw.rect(self.screen, (255, 255, 255), input_rect)
+            pygame.draw.rect(self.screen, (0, 0, 0), input_rect, 2)
+            
+            # Draw input text with composition overlay
+            display_text = self.input_text + self.composition
+            input_surface = self.reading_font.render(display_text, True, (0, 0, 0))
+            input_text_rect = input_surface.get_rect(center=input_rect.center)
+            self.screen.blit(input_surface, input_text_rect)
+            
+            # Draw button
+            button_color = self.button_hover_color if self.button_hover else self.button_color
+            pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=5)
+            button_text = "Submit"
+            button_surface = self.meaning_font.render(button_text, True, (255, 255, 255))
+            button_text_rect = button_surface.get_rect(center=self.button_rect.center)
+            self.screen.blit(button_surface, button_text_rect)
+        else:
+            # Draw close button
+            close_button = pygame.Rect(200, 330, 200, 50)
+            button_color = self.button_hover_color if self.button_hover else self.button_color
+            pygame.draw.rect(self.screen, button_color, close_button, border_radius=5)
+            button_surface = self.meaning_font.render("Close", True, (255, 255, 255))
+            button_text_rect = button_surface.get_rect(center=close_button.center)
+            self.screen.blit(button_surface, button_text_rect)
+        
+        # Draw meanings
+        if self.meaning_text:
+            self.draw_text_wrapped(self.meaning_text, self.meaning_font, self.meaning_color, 400)
+        
+        # Draw status
+        if self.status_text:
+            status_surface = self.meaning_font.render(self.status_text, True, self.status_color)
+            status_rect = status_surface.get_rect(center=(self.width // 2, 460))
+            self.screen.blit(status_surface, status_rect)
+        
+        pygame.display.flip()
+    
+    def run(self):
+        """Start the game loop."""
+        running = True
+        
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                
+                # Handle IME text input (for Japanese/other languages)
+                elif event.type == pygame.TEXTINPUT:
+                    if self.input_active and not self.animating:
+                        self.input_text += event.text
+                        print(f"Input: {self.input_text}")  # Debug output
+                
+                # Handle IME composition (in-progress text)
+                elif event.type == pygame.TEXTEDITING:
+                    self.composition = event.text
+                    print(f"Composing: {self.composition}")  # Debug output
+                
+                elif event.type == pygame.KEYDOWN:
+                    if self.game_over:
+                        continue
+                    
+                    if self.input_active and not self.animating:
+                        if event.key == pygame.K_RETURN:
+                            self.check_answer()
+                        elif event.key == pygame.K_BACKSPACE:
+                            self.input_text = self.input_text[:-1]
+                            print(f"Input: {self.input_text}")  # Debug output
+                
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if self.button_rect.collidepoint(event.pos):
+                        if self.game_over:
+                            running = False
+                        else:
+                            self.check_answer()
+                
+                elif event.type == pygame.MOUSEMOTION:
+                    self.button_hover = self.button_rect.collidepoint(event.pos)
+            
+            # Update animations
+            self.update_animation()
+            
+            # Draw everything
+            self.draw()
+            
+            # Control frame rate
+            self.clock.tick(60)
+        
+        pygame.quit()
 
 if __name__ == "__main__":
     main()
