@@ -6,11 +6,62 @@ import pygame
 from html.parser import HTMLParser
 import threading
 from queue import Queue
+import csv
+import os
+from datetime import datetime
+import math
 
 ANKI_CONNECT_URL = "http://localhost:8765"
 
 # Initialize pygame
 pygame.init()
+pygame.mixer.init()
+
+# Particle classes for visual effects
+class Particle:
+    def __init__(self, x, y, color, velocity_x=0, velocity_y=0, lifetime=1.0, size=3):
+        self.x = x
+        self.y = y
+        self.color = color
+        self.velocity_x = velocity_x
+        self.velocity_y = velocity_y
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+        self.size = size
+        self.alpha = 255
+    
+    def update(self, dt):
+        self.x += self.velocity_x * dt
+        self.y += self.velocity_y * dt
+        self.velocity_y += 200 * dt  # Gravity
+        self.lifetime -= dt
+        self.alpha = int(255 * (self.lifetime / self.max_lifetime))
+        return self.lifetime > 0
+    
+    def draw(self, surface):
+        if self.alpha > 0:
+            s = pygame.Surface((int(self.size * 2), int(self.size * 2)), pygame.SRCALPHA)
+            color_with_alpha = (*self.color[:3], self.alpha)
+            pygame.draw.circle(s, color_with_alpha, (int(self.size), int(self.size)), int(self.size))
+            surface.blit(s, (int(self.x - self.size), int(self.y - self.size)))
+
+class FireParticle(Particle):
+    def __init__(self, x, y):
+        colors = [(255, 100, 0), (255, 200, 0), (255, 150, 0), (255, 69, 0)]
+        color = random.choice(colors)
+        velocity_x = random.uniform(-30, 30)
+        velocity_y = random.uniform(-100, -50)
+        lifetime = random.uniform(0.5, 1.0)
+        size = random.uniform(3, 6)
+        super().__init__(x, y, color, velocity_x, velocity_y, lifetime, size)
+    
+    def update(self, dt):
+        self.velocity_y -= 50 * dt  # Rise up instead of fall
+        self.x += self.velocity_x * dt
+        self.y += self.velocity_y * dt
+        self.lifetime -= dt
+        self.alpha = int(255 * (self.lifetime / self.max_lifetime))
+        return self.lifetime > 0
 
 # Utility to call AnkiConnect
 
@@ -76,6 +127,64 @@ def strip_html(html):
 # Check if a string contains kanji (CJK Unified Ideographs)
 def contains_kanji(text):
     return re.search(r"[\u4e00-\u9fff]", text) is not None
+
+# Sound generation functions
+def generate_sound(frequency, duration=0.1):
+    """Generate a simple beep sound."""
+    try:
+        sample_rate = 22050
+        n_samples = int(round(duration * sample_rate))
+        buf = []
+        for i in range(n_samples):
+            value = int(32767.0 * math.sin(2.0 * math.pi * frequency * i / sample_rate))
+            buf.append([value, value])
+        sound = pygame.sndarray.make_sound(buf)
+        return sound
+    except:
+        return None
+
+def save_score_to_csv(score, total, points, percentage, avg_points):
+    """Save the game score to a CSV file."""
+    filename = "vocab_game_scores.csv"
+    file_exists = os.path.isfile(filename)
+    
+    with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
+        fieldnames = ['date', 'time', 'score', 'total', 'percentage', 'points', 'avg_points']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        
+        if not file_exists:
+            writer.writeheader()
+        
+        now = datetime.now()
+        writer.writerow({
+            'date': now.strftime('%Y-%m-%d'),
+            'time': now.strftime('%H:%M:%S'),
+            'score': score,
+            'total': total,
+            'percentage': percentage,
+            'points': points,
+            'avg_points': avg_points
+        })
+
+def get_high_scores():
+    """Get the top 5 high scores from CSV."""
+    filename = "vocab_game_scores.csv"
+    if not os.path.isfile(filename):
+        return []
+    
+    scores = []
+    with open(filename, 'r', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            scores.append({
+                'date': row['date'],
+                'points': int(row['points']),
+                'percentage': int(row['percentage'])
+            })
+    
+    # Sort by points descending
+    scores.sort(key=lambda x: x['points'], reverse=True)
+    return scores[:5]
 
 def get_jisho_info(word):
     """
@@ -149,6 +258,20 @@ class VocabGameGUI:
         self.can_skip = False  # Can skip animation with Enter
         self.question_start_time = None  # Track when question was displayed
         self.last_points_earned = 0  # Points earned on last answer
+        
+        # Particle system
+        self.particles = []
+        self.background_time = 0
+        
+        # Sound effects
+        try:
+            self.sound_correct = generate_sound(523, 0.1)  # C note
+            self.sound_incorrect = generate_sound(200, 0.15)  # Low note
+            self.sound_streak = generate_sound(659, 0.08)  # E note
+        except:
+            self.sound_correct = None
+            self.sound_incorrect = None
+            self.sound_streak = None
         
         # Card preloading queue
         self.ready_cards = Queue()
@@ -342,6 +465,22 @@ class VocabGameGUI:
         self.feedback_color = self.correct_color
         self.word_color = self.correct_color
         
+        # Play sound
+        if self.sound_correct:
+            self.sound_correct.play()
+        if self.streak >= 5 and self.sound_streak:
+            pygame.time.set_timer(pygame.USEREVENT + 1, 100, 1)
+        
+        # Create success particles
+        for _ in range(30):
+            x = random.randint(100, 500)
+            y = random.randint(100, 200)
+            vx = random.uniform(-100, 100)
+            vy = random.uniform(-150, -50)
+            color = self.correct_color
+            particle = Particle(x, y, color, vx, vy, random.uniform(0.5, 1.0), random.uniform(2, 5))
+            self.particles.append(particle)
+        
         # Show meanings
         if self.current_info['meanings']:
             self.meaning_text = "Meanings: " + ", ".join(self.current_info['meanings'])
@@ -354,6 +493,20 @@ class VocabGameGUI:
         self.feedback_text = f"✗ Incorrect: {correct_reading}"
         self.feedback_color = self.incorrect_color
         self.word_color = self.incorrect_color
+        
+        # Play sound
+        if self.sound_incorrect:
+            self.sound_incorrect.play()
+        
+        # Create failure particles
+        for _ in range(20):
+            x = random.randint(150, 450)
+            y = random.randint(100, 200)
+            vx = random.uniform(-50, 50)
+            vy = random.uniform(-100, -30)
+            color = self.incorrect_color
+            particle = Particle(x, y, color, vx, vy, random.uniform(0.4, 0.8), random.uniform(2, 4))
+            self.particles.append(particle)
         
         # Show meanings
         if self.current_info['meanings']:
@@ -413,7 +566,14 @@ class VocabGameGUI:
         self.meaning_text = ""
         percentage = int(self.score / self.total * 100) if self.total > 0 else 0
         avg_points = int(self.points / self.total) if self.total > 0 else 0
-        self.status_text = f"Score: {self.score}/{self.total} ({percentage}%) | Total Points: {self.points} | Avg: {avg_points} pts/card"
+        
+        # Save score to CSV
+        save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
+        
+        # Get high scores
+        self.high_scores = get_high_scores()
+        
+        self.status_text = f"Score: {self.score}/{self.total} ({percentage}%) | Points: {self.points} | Avg: {avg_points} pts/card"
         self.input_active = False
     
     def draw_text_wrapped(self, text, font, color, y_pos, max_width=500):
@@ -441,8 +601,28 @@ class VocabGameGUI:
     
     def draw(self):
         """Draw the UI."""
-        # Clear screen
-        self.screen.fill(self.bg_color)
+        # Animated background
+        base_color = self.bg_color
+        wave = int(10 * math.sin(self.background_time * 0.5))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw background particles (subtle)
+        for i in range(5):
+            x = (self.background_time * 20 + i * 120) % self.width
+            y = 50 + i * 80
+            alpha = int(50 + 30 * math.sin(self.background_time + i))
+            s = pygame.Surface((4, 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
+            self.screen.blit(s, (x, y))
+        
+        # Draw active particles
+        for particle in self.particles:
+            particle.draw(self.screen)
         
         # Draw score and points
         score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
@@ -450,13 +630,19 @@ class VocabGameGUI:
         score_rect = score_surface.get_rect(center=(self.width // 2, 20))
         self.screen.blit(score_surface, score_rect)
         
-        # Draw streak
+        # Draw streak with fire particles
         if self.streak > 0:
             streak_text = f"🔥 Streak: {self.streak}x"
             streak_color = self.correct_color if self.streak >= 5 else self.text_color
             streak_surface = self.score_font.render(streak_text, True, streak_color)
             streak_rect = streak_surface.get_rect(center=(self.width // 2, 45))
             self.screen.blit(streak_surface, streak_rect)
+            
+            # Add fire particles for high streaks
+            if self.streak >= 5 and random.random() < 0.3:
+                fire_x = streak_rect.left + random.randint(-10, 10)
+                fire_y = streak_rect.centery + random.randint(-5, 5)
+                self.particles.append(FireParticle(fire_x, fire_y))
         
         # Draw word (with shake offset)
         word_surface = self.word_font.render(self.word_text, True, self.word_color)
@@ -502,6 +688,18 @@ class VocabGameGUI:
             button_surface = self.meaning_font.render("Close", True, (255, 255, 255))
             button_text_rect = button_surface.get_rect(center=close_button.center)
             self.screen.blit(button_surface, button_text_rect)
+            
+            # Draw high scores
+            if hasattr(self, 'high_scores') and self.high_scores:
+                hs_y = 250
+                hs_title = self.meaning_font.render("🏆 High Scores 🏆", True, (255, 215, 0))
+                self.screen.blit(hs_title, hs_title.get_rect(center=(self.width // 2, hs_y)))
+                
+                for i, hs in enumerate(self.high_scores[:3], 1):
+                    hs_text = f"{i}. {hs['points']} pts ({hs['percentage']}%) - {hs['date']}"
+                    hs_surface = self.meaning_font.render(hs_text, True, self.text_color)
+                    hs_rect = hs_surface.get_rect(center=(self.width // 2, hs_y + 25 + i * 25))
+                    self.screen.blit(hs_surface, hs_rect)
         
         # Draw meanings
         if self.meaning_text:
@@ -520,9 +718,20 @@ class VocabGameGUI:
         running = True
         
         while running:
+            dt = self.clock.tick(60) / 1000.0  # Delta time in seconds
+            self.background_time += dt
+            
+            # Update particles
+            self.particles = [p for p in self.particles if p.update(dt)]
+            
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                
+                # Streak sound event
+                elif event.type == pygame.USEREVENT + 1:
+                    if self.sound_streak:
+                        self.sound_streak.play()
                 
                 # Handle IME text input (for Japanese/other languages)
                 elif event.type == pygame.TEXTINPUT:
@@ -565,9 +774,6 @@ class VocabGameGUI:
             
             # Draw everything
             self.draw()
-            
-            # Control frame rate
-            self.clock.tick(60)
         
         pygame.quit()
 
