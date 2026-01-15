@@ -19,6 +19,7 @@ STATE_COUNTDOWN = 'countdown'
 STATE_PLAYING = 'playing'
 STATE_LEADERBOARD = 'leaderboard'
 STATE_GAME_OVER = 'game_over'
+STATE_REVIEW_INCORRECT = 'review_incorrect'
 
 # Romaji to Hiragana conversion map
 ROMAJI_TO_HIRAGANA = {
@@ -313,6 +314,7 @@ class VocabGameGUI:
         self.can_skip = False  # Can skip animation with Enter
         self.question_start_time = None  # Track when question was displayed
         self.last_points_earned = 0  # Points earned on last answer
+        self.incorrect_answers = []  # Track incorrect answers
         
         # Game state
         self.state = STATE_MENU
@@ -417,6 +419,9 @@ class VocabGameGUI:
         self.back_button_hover = False
         self.leave_button_hover = False
         
+        # Review screen scroll
+        self.review_scroll = 0
+        
         # Animation state
         self.feedback_text = ""
         self.feedback_color = self.text_color
@@ -464,6 +469,7 @@ class VocabGameGUI:
         self.points = 0
         self.total = 0
         self.streak = 0
+        self.incorrect_answers = []
         self.animating = False
         self.game_over = False
     
@@ -474,7 +480,12 @@ class VocabGameGUI:
             avg_points = int(self.points / self.total)
             save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
         
-        self.state = STATE_MENU
+        # Show incorrect answers if there are any
+        if self.incorrect_answers:
+            self.state = STATE_REVIEW_INCORRECT
+            self.review_scroll = 0  # Reset scroll
+        else:
+            self.state = STATE_MENU
         self.animating = False
         self.game_over = False
     
@@ -640,6 +651,13 @@ class VocabGameGUI:
         self.feedback_color = self.incorrect_color
         self.word_color = self.incorrect_color
         
+        # Track incorrect answer
+        self.incorrect_answers.append({
+            'word': self.current_info['word'],
+            'correct_reading': correct_reading,
+            'your_answer': self.input_text.strip()
+        })
+        
         # Play sound
         if self.sound_incorrect:
             self.sound_incorrect.play()
@@ -758,6 +776,8 @@ class VocabGameGUI:
             self.draw_game()
         elif self.state == STATE_GAME_OVER:
             self.draw_game_over()
+        elif self.state == STATE_REVIEW_INCORRECT:
+            self.draw_review_incorrect()
         
         pygame.display.flip()
     
@@ -797,7 +817,7 @@ class VocabGameGUI:
         # Play button
         play_color = self.button_hover_color if self.play_button_hover else self.button_color
         pygame.draw.rect(self.screen, play_color, self.play_button, border_radius=10)
-        play_text = self.meaning_font.render("▶ Play", True, (255, 255, 255))
+        play_text = self.meaning_font.render("Play", True, (255, 255, 255))
         play_text_rect = play_text.get_rect(center=self.play_button.center)
         self.screen.blit(play_text, play_text_rect)
         
@@ -848,7 +868,7 @@ class VocabGameGUI:
         
         # Title
         title_font = pygame.font.Font(None, 48)
-        title = title_font.render("🏆 Leaderboard 🏆", True, (255, 215, 0))
+        title = title_font.render("Leaderboard", True, (255, 215, 0))
         title_rect = title.get_rect(center=(self.width // 2, 50))
         self.screen.blit(title, title_rect)
         
@@ -960,17 +980,32 @@ class VocabGameGUI:
             self.screen.blit(streak_bg, streak_rect_bg)
             
             streak_font_large = pygame.font.Font(None, 36)
-            streak_text = f"🔥 {self.streak}x"
+            streak_text = f"{self.streak}x Streak"
             streak_color = self.correct_color if self.streak >= 5 else self.text_color
             streak_surface = streak_font_large.render(streak_text, True, streak_color)
             streak_rect = streak_surface.get_rect(center=(self.width // 2, 45))
             self.screen.blit(streak_surface, streak_rect)
             
-            # Add fire particles for high streaks
-            if self.streak >= 5 and random.random() < 0.5:
-                fire_x = streak_rect.left + random.randint(-20, 20)
-                fire_y = streak_rect.centery + random.randint(-10, 10)
-                self.particles.append(FireParticle(fire_x, fire_y))
+            # Add fire particles around screen border for high streaks
+            if self.streak >= 5:
+                # More particles as streak increases
+                particle_chance = min(0.3 + (self.streak * 0.05), 0.95)
+                if random.random() < particle_chance:
+                    # Choose a random edge of the screen
+                    edge = random.randint(0, 3)  # 0=top, 1=right, 2=bottom, 3=left
+                    if edge == 0:  # Top
+                        fire_x = random.randint(0, self.width)
+                        fire_y = 0
+                    elif edge == 1:  # Right
+                        fire_x = self.width
+                        fire_y = random.randint(0, self.height)
+                    elif edge == 2:  # Bottom
+                        fire_x = random.randint(0, self.width)
+                        fire_y = self.height
+                    else:  # Left
+                        fire_x = 0
+                        fire_y = random.randint(0, self.height)
+                    self.particles.append(FireParticle(fire_x, fire_y))
         
         # Update word zoom animation with smooth easing
         if not self.animating and self.input_active:
@@ -1090,6 +1125,108 @@ class VocabGameGUI:
         button_text_rect = button_surface.get_rect(center=self.button_rect.center)
         self.screen.blit(button_surface, button_text_rect)
     
+    def draw_review_incorrect(self):
+        """Draw the review incorrect answers screen."""
+        # Animated background like main menu
+        base_color = self.bg_color
+        wave = int(10 * math.sin(self.background_time * 0.5))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw background particles
+        for i in range(5):
+            x = (self.background_time * 20 + i * 120) % self.width
+            y = 50 + i * 80
+            alpha = int(50 + 30 * math.sin(self.background_time + i))
+            s = pygame.Surface((4, 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
+            self.screen.blit(s, (x, y))
+        
+        # Title
+        title_font = pygame.font.Font(None, 48)
+        title = title_font.render("Review Incorrect Answers", True, self.incorrect_color)
+        title_rect = title.get_rect(center=(self.width // 2, 40))
+        self.screen.blit(title, title_rect)
+        
+        # Count
+        count_text = f"{len(self.incorrect_answers)} incorrect answer(s)"
+        count_surface = self.meaning_font.render(count_text, True, self.gray_color)
+        count_rect = count_surface.get_rect(center=(self.width // 2, 80))
+        self.screen.blit(count_surface, count_rect)
+        
+        # Scrolling hint if there are many items
+        if len(self.incorrect_answers) > 7:
+            hint_text = "(Scroll to see all)"
+            hint_surface = self.score_font.render(hint_text, True, self.gray_color)
+            hint_rect = hint_surface.get_rect(center=(self.width // 2, 100))
+            self.screen.blit(hint_surface, hint_rect)
+        
+        # Create a scrollable area
+        scroll_area_top = 120
+        scroll_area_bottom = 560
+        scroll_area_height = scroll_area_bottom - scroll_area_top
+        
+        # Calculate total content height
+        item_height = 60
+        total_content_height = len(self.incorrect_answers) * item_height
+        
+        # Clamp scroll position
+        max_scroll = max(0, total_content_height - scroll_area_height)
+        self.review_scroll = max(0, min(self.review_scroll, max_scroll))
+        
+        # Create a clipping surface for the scrollable area
+        scroll_surface = pygame.Surface((self.width, scroll_area_height))
+        scroll_surface.fill(bg_color)
+        
+        # Draw items onto the scroll surface
+        for i, ans in enumerate(self.incorrect_answers):
+            y_pos = i * item_height - self.review_scroll
+            
+            # Only draw if visible in scroll area
+            if -item_height < y_pos < scroll_area_height:
+                # Word
+                word_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 36)
+                word_surface = word_font.render(ans['word'], True, self.text_color)
+                word_rect = word_surface.get_rect(center=(self.width // 2, y_pos + 20))
+                scroll_surface.blit(word_surface, word_rect)
+                
+                # Correct reading (in green)
+                reading_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 24)
+                correct_surface = reading_font.render(f"✓ {ans['correct_reading']}", True, self.correct_color)
+                correct_rect = correct_surface.get_rect(center=(self.width // 2, y_pos + 45))
+                scroll_surface.blit(correct_surface, correct_rect)
+                
+                # Your answer (in red) if different
+                if ans['your_answer']:
+                    your_surface = reading_font.render(f"✗ {ans['your_answer']}", True, self.incorrect_color)
+                    your_rect = your_surface.get_rect(center=(self.width // 2 + 150, y_pos + 45))
+                    scroll_surface.blit(your_surface, your_rect)
+        
+        # Blit the scroll surface to the main screen
+        self.screen.blit(scroll_surface, (0, scroll_area_top))
+        
+        # Draw scrollbar if needed
+        if total_content_height > scroll_area_height:
+            scrollbar_x = self.width - 15
+            scrollbar_height = max(30, int((scroll_area_height / total_content_height) * scroll_area_height))
+            scrollbar_y = scroll_area_top + int((self.review_scroll / max_scroll) * (scroll_area_height - scrollbar_height))
+            
+            pygame.draw.rect(self.screen, self.gray_color, 
+                           (scrollbar_x, scrollbar_y, 10, scrollbar_height), 
+                           border_radius=5)
+        
+        # Back to menu button
+        self.button_rect = pygame.Rect(300, 580, 200, 50)
+        button_color = self.button_hover_color if self.button_hover else self.button_color
+        pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=10)
+        button_surface = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
+        button_text_rect = button_surface.get_rect(center=self.button_rect.center)
+        self.screen.blit(button_surface, button_text_rect)
+    
     def run(self):
         """Start the game loop."""
         running = True
@@ -1152,6 +1289,13 @@ class VocabGameGUI:
                                 print(f"Input: {self.input_text} (romaji: {self.romaji_buffer})")  # Debug output
                 
                 elif event.type == pygame.MOUSEBUTTONDOWN:
+                    # Handle mouse wheel for scrolling in review screen
+                    if self.state == STATE_REVIEW_INCORRECT:
+                        if event.button == 4:  # Scroll up
+                            self.review_scroll -= 30
+                        elif event.button == 5:  # Scroll down
+                            self.review_scroll += 30
+                    
                     self.handle_mouse_click(event.pos)
                 
                 elif event.type == pygame.MOUSEMOTION:
@@ -1187,6 +1331,10 @@ class VocabGameGUI:
         elif self.state == STATE_GAME_OVER:
             if self.button_rect.collidepoint(pos):
                 self.state = STATE_MENU
+        
+        elif self.state == STATE_REVIEW_INCORRECT:
+            if self.button_rect.collidepoint(pos):
+                self.state = STATE_MENU
     
     def update_button_hover(self, pos):
         """Update button hover states based on mouse position."""
@@ -1202,6 +1350,9 @@ class VocabGameGUI:
             self.leave_button_hover = self.leave_button.collidepoint(pos)
         
         elif self.state == STATE_GAME_OVER:
+            self.button_hover = self.button_rect.collidepoint(pos)
+        
+        elif self.state == STATE_REVIEW_INCORRECT:
             self.button_hover = self.button_rect.collidepoint(pos)
 
 if __name__ == "__main__":
