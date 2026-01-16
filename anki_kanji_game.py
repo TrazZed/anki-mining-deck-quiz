@@ -421,6 +421,8 @@ class VocabGameGUI:
         
         # Review screen scroll
         self.review_scroll = 0
+        self.review_cache = None  # Cache rendered review items
+        self.review_cache_scroll = -1  # Track scroll position for cache invalidation
         
         # Animation state
         self.feedback_text = ""
@@ -484,6 +486,8 @@ class VocabGameGUI:
         if self.incorrect_answers:
             self.state = STATE_REVIEW_INCORRECT
             self.review_scroll = 0  # Reset scroll
+            self.review_cache = None  # Clear cache for fresh rendering
+            self.review_cache_scroll = -1
         else:
             self.state = STATE_MENU
         self.animating = False
@@ -1127,24 +1131,8 @@ class VocabGameGUI:
     
     def draw_review_incorrect(self):
         """Draw the review incorrect answers screen."""
-        # Animated background like main menu
-        base_color = self.bg_color
-        wave = int(10 * math.sin(self.background_time * 0.5))
-        bg_color = (
-            max(0, min(255, base_color[0] + wave)),
-            max(0, min(255, base_color[1] + wave)),
-            max(0, min(255, base_color[2] + wave))
-        )
-        self.screen.fill(bg_color)
-        
-        # Draw background particles
-        for i in range(5):
-            x = (self.background_time * 20 + i * 120) % self.width
-            y = 50 + i * 80
-            alpha = int(50 + 30 * math.sin(self.background_time + i))
-            s = pygame.Surface((4, 4), pygame.SRCALPHA)
-            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
-            self.screen.blit(s, (x, y))
+        # Static background (no animation for better performance)
+        self.screen.fill(self.bg_color)
         
         # Title
         title_font = pygame.font.Font(None, 48)
@@ -1178,36 +1166,51 @@ class VocabGameGUI:
         max_scroll = max(0, total_content_height - scroll_area_height)
         self.review_scroll = max(0, min(self.review_scroll, max_scroll))
         
-        # Create a clipping surface for the scrollable area
-        scroll_surface = pygame.Surface((self.width, scroll_area_height))
-        scroll_surface.fill(bg_color)
-        
-        # Draw items onto the scroll surface
-        for i, ans in enumerate(self.incorrect_answers):
-            y_pos = i * item_height - self.review_scroll
+        # Cache rendered content to avoid re-rendering text every frame
+        # Only regenerate if cache is invalid or scroll position changed significantly
+        if (self.review_cache is None or 
+            abs(self.review_cache_scroll - self.review_scroll) > 1):
             
-            # Only draw if visible in scroll area
-            if -item_height < y_pos < scroll_area_height:
-                # Word
-                word_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 36)
-                word_surface = word_font.render(ans['word'], True, self.text_color)
-                word_rect = word_surface.get_rect(center=(self.width // 2, y_pos + 20))
-                scroll_surface.blit(word_surface, word_rect)
+            self.review_cache_scroll = self.review_scroll
+            
+            # Create a clipping surface for the scrollable area
+            scroll_surface = pygame.Surface((self.width, scroll_area_height))
+            scroll_surface.fill(self.bg_color)
+            
+            # Pre-render fonts (cached for the session)
+            if not hasattr(self, '_review_fonts_cached'):
+                self._review_word_font = pygame.font.SysFont(
+                    self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 36)
+                self._review_reading_font = pygame.font.SysFont(
+                    self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 24)
+                self._review_fonts_cached = True
+            
+            # Draw items onto the scroll surface
+            for i, ans in enumerate(self.incorrect_answers):
+                y_pos = i * item_height - self.review_scroll
                 
-                # Correct reading (in green)
-                reading_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 24)
-                correct_surface = reading_font.render(f"✓ {ans['correct_reading']}", True, self.correct_color)
-                correct_rect = correct_surface.get_rect(center=(self.width // 2, y_pos + 45))
-                scroll_surface.blit(correct_surface, correct_rect)
-                
-                # Your answer (in red) if different
-                if ans['your_answer']:
-                    your_surface = reading_font.render(f"✗ {ans['your_answer']}", True, self.incorrect_color)
-                    your_rect = your_surface.get_rect(center=(self.width // 2 + 150, y_pos + 45))
-                    scroll_surface.blit(your_surface, your_rect)
+                # Only draw if visible in scroll area (with margin)
+                if -item_height < y_pos < scroll_area_height + item_height:
+                    # Word
+                    word_surface = self._review_word_font.render(ans['word'], True, self.text_color)
+                    word_rect = word_surface.get_rect(center=(self.width // 2, y_pos + 20))
+                    scroll_surface.blit(word_surface, word_rect)
+                    
+                    # Correct reading (in green)
+                    correct_surface = self._review_reading_font.render(f"✓ {ans['correct_reading']}", True, self.correct_color)
+                    correct_rect = correct_surface.get_rect(center=(self.width // 2, y_pos + 45))
+                    scroll_surface.blit(correct_surface, correct_rect)
+                    
+                    # Your answer (in red) if different
+                    if ans['your_answer']:
+                        your_surface = self._review_reading_font.render(f"✗ {ans['your_answer']}", True, self.incorrect_color)
+                        your_rect = your_surface.get_rect(center=(self.width // 2 + 150, y_pos + 45))
+                        scroll_surface.blit(your_surface, your_rect)
+            
+            self.review_cache = scroll_surface
         
-        # Blit the scroll surface to the main screen
-        self.screen.blit(scroll_surface, (0, scroll_area_top))
+        # Blit the cached scroll surface to the main screen
+        self.screen.blit(self.review_cache, (0, scroll_area_top))
         
         # Draw scrollbar if needed
         if total_content_height > scroll_area_height:
