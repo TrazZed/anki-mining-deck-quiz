@@ -14,6 +14,7 @@ import math
 ANKI_CONNECT_URL = "http://localhost:8765"
 
 # Game states
+STATE_LOADING = 'loading'
 STATE_MENU = 'menu'
 STATE_COUNTDOWN = 'countdown'
 STATE_PLAYING = 'playing'
@@ -283,26 +284,15 @@ def get_jisho_info(word):
         return None
 
 def main():
-    print("Connecting to Anki...")
+    # Launch GUI first with loading screen
     deck_name = "日本語::Mining"
-    print(f"Using deck: {deck_name}")
-    card_ids = get_card_ids(deck_name)
-    cards = get_cards_info(card_ids)
-    # Filter for cards with kanji and exclude new cards (type 0 = new, type 1 = learning, type 2 = review)
-    kanji_cards = [card for card in cards if contains_kanji(card['question']) and card.get('type', 0) != 0]
-    if not kanji_cards:
-        print("No cards with kanji found in this deck.")
-        return
-    print(f"Loaded {len(kanji_cards)} kanji cards (excluding new cards).")
-    random.shuffle(kanji_cards)
-    
-    # Launch GUI
-    app = VocabGameGUI(kanji_cards)
+    app = VocabGameGUI(None, deck_name)
     app.run()
 
 class VocabGameGUI:
-    def __init__(self, cards):
+    def __init__(self, cards, deck_name=None):
         self.cards = cards
+        self.deck_name = deck_name
         self.current_index = 0
         self.score = 0
         self.points = 0  # Total points earned
@@ -316,8 +306,13 @@ class VocabGameGUI:
         self.last_points_earned = 0  # Points earned on last answer
         self.incorrect_answers = []  # Track incorrect answers
         
+        # Loading state
+        self.loading_deck = (cards is None)
+        self.loading_status = "Initializing..."
+        self.loading_error = None
+        
         # Game state
-        self.state = STATE_MENU
+        self.state = STATE_LOADING if self.loading_deck else STATE_MENU
         self.high_scores = []
         self.countdown_start = 0
         self.countdown_number = 3
@@ -438,9 +433,14 @@ class VocabGameGUI:
         # Clock for frame rate
         self.clock = pygame.time.Clock()
         
-        # Start background card loading
-        self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
-        self.fetch_thread.start()
+        # Start deck loading if needed
+        if self.loading_deck:
+            loading_thread = threading.Thread(target=self._load_deck, daemon=True)
+            loading_thread.start()
+        else:
+            # Start background card loading
+            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
+            self.fetch_thread.start()
     
     def _preload_cards(self):
         """Background thread to preload cards from Jisho."""
@@ -461,6 +461,49 @@ class VocabGameGUI:
                 time.sleep(0.1)
         
         self.loading = False
+    
+    def _load_deck(self):
+        """Background thread to load the Anki deck."""
+        try:
+            self.loading_status = "Connecting to Anki..."
+            print("Connecting to Anki...")
+            
+            self.loading_status = f"Loading deck: {self.deck_name}..."
+            print(f"Using deck: {self.deck_name}")
+            card_ids = get_card_ids(self.deck_name)
+            
+            self.loading_status = f"Loading {len(card_ids)} cards..."
+            cards = get_cards_info(card_ids)
+            
+            self.loading_status = "Filtering cards..."
+            # Filter for cards with kanji and exclude new cards
+            kanji_cards = [card for card in cards if contains_kanji(card['question']) and card.get('type', 0) != 0]
+            
+            if not kanji_cards:
+                self.loading_error = "No cards with kanji found in this deck."
+                print(self.loading_error)
+                return
+            
+            print(f"Loaded {len(kanji_cards)} kanji cards (excluding new cards).")
+            random.shuffle(kanji_cards)
+            
+            # Set the cards and update state
+            self.cards = kanji_cards
+            self.loading_status = "Ready!"
+            
+            # Wait a moment to show "Ready!" message
+            time.sleep(0.5)
+            
+            self.loading_deck = False
+            self.state = STATE_MENU
+            
+            # Start background card preloading
+            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
+            self.fetch_thread.start()
+            
+        except Exception as e:
+            self.loading_error = f"Error loading deck: {str(e)}"
+            print(self.loading_error)
     
     def start_game(self):
         """Start a new game."""
@@ -770,7 +813,9 @@ class VocabGameGUI:
     
     def draw(self):
         """Draw the UI based on current state."""
-        if self.state == STATE_MENU:
+        if self.state == STATE_LOADING:
+            self.draw_loading()
+        elif self.state == STATE_MENU:
             self.draw_menu()
         elif self.state == STATE_COUNTDOWN:
             self.draw_countdown()
@@ -831,6 +876,72 @@ class VocabGameGUI:
         lb_text = self.meaning_font.render("🏆 Leaderboard", True, (255, 255, 255))
         lb_text_rect = lb_text.get_rect(center=self.leaderboard_button.center)
         self.screen.blit(lb_text, lb_text_rect)
+    
+    def draw_loading(self):
+        """Draw the loading screen."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(15 * math.sin(self.background_time * 2))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw animated particles
+        for i in range(10):
+            x = (self.background_time * 50 + i * 80) % self.width
+            y = (i * 65) % self.height
+            alpha = int(100 + 50 * math.sin(self.background_time * 2 + i))
+            size = 3 + int(2 * math.sin(self.background_time * 3 + i * 0.5))
+            s = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.button_color[:3], alpha), (size, size), size)
+            self.screen.blit(s, (int(x), int(y)))
+        
+        # Title
+        title_font = pygame.font.Font(None, 64)
+        title = title_font.render("Loading...", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, self.height // 2 - 50))
+        self.screen.blit(title, title_rect)
+        
+        # Loading status
+        if self.loading_error:
+            status_color = self.incorrect_color
+            status = self.loading_error
+        else:
+            status_color = self.button_color
+            status = self.loading_status
+        
+        status_font = pygame.font.Font(None, 28)
+        status_surface = status_font.render(status, True, status_color)
+        status_rect = status_surface.get_rect(center=(self.width // 2, self.height // 2 + 20))
+        self.screen.blit(status_surface, status_rect)
+        
+        # Animated loading bar
+        if not self.loading_error:
+            bar_width = 400
+            bar_height = 20
+            bar_x = (self.width - bar_width) // 2
+            bar_y = self.height // 2 + 70
+            
+            # Background bar
+            pygame.draw.rect(self.screen, self.gray_color, 
+                           (bar_x, bar_y, bar_width, bar_height), 
+                           border_radius=10)
+            
+            # Animated progress (indeterminate)
+            progress_width = 100
+            progress_x = bar_x + int((bar_width - progress_width) * (0.5 + 0.5 * math.sin(self.background_time * 3)))
+            pygame.draw.rect(self.screen, self.button_color,
+                           (progress_x, bar_y, progress_width, bar_height),
+                           border_radius=10)
+        else:
+            # Show error and quit option
+            hint_text = "Press ESC to quit"
+            hint_surface = self.meaning_font.render(hint_text, True, self.gray_color)
+            hint_rect = hint_surface.get_rect(center=(self.width // 2, self.height // 2 + 80))
+            self.screen.blit(hint_surface, hint_rect)
     
     def draw_countdown(self):
         """Draw the countdown screen."""
@@ -1270,7 +1381,10 @@ class VocabGameGUI:
                         print(f"Composing: {self.composition}")  # Debug output
                 
                 elif event.type == pygame.KEYDOWN:
-                    if self.state == STATE_PLAYING:
+                    if self.state == STATE_LOADING and self.loading_error:
+                        if event.key == pygame.K_ESCAPE:
+                            running = False
+                    elif self.state == STATE_PLAYING:
                         if event.key == pygame.K_RETURN:
                             if self.input_active and not self.animating:
                                 self.check_answer()
