@@ -18,6 +18,7 @@ STATE_LOADING = 'loading'
 STATE_MENU = 'menu'
 STATE_COUNTDOWN = 'countdown'
 STATE_PLAYING = 'playing'
+STATE_PAUSED = 'paused'
 STATE_LEADERBOARD = 'leaderboard'
 STATE_GAME_OVER = 'game_over'
 STATE_REVIEW_INCORRECT = 'review_incorrect'
@@ -303,6 +304,7 @@ class VocabGameGUI:
         self.game_over = False
         self.can_skip = False  # Can skip animation with Enter
         self.question_start_time = None  # Track when question was displayed
+        self.paused_time_elapsed = 0  # Time elapsed before pausing
         self.last_points_earned = 0  # Points earned on last answer
         self.incorrect_answers = []  # Track incorrect answers
         
@@ -409,10 +411,18 @@ class VocabGameGUI:
         self.leaderboard_button = pygame.Rect(300, 330, 200, 60)
         self.back_button = pygame.Rect(300, 500, 200, 50)
         self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
+        self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
         self.play_button_hover = False
         self.leaderboard_button_hover = False
         self.back_button_hover = False
         self.leave_button_hover = False
+        self.pause_button_hover = False
+        
+        # Pause menu buttons
+        self.resume_button = pygame.Rect(300, 250, 200, 60)
+        self.quit_button = pygame.Rect(300, 330, 200, 60)
+        self.resume_button_hover = False
+        self.quit_button_hover = False
         
         # Review screen scroll
         self.review_scroll = 0
@@ -517,6 +527,20 @@ class VocabGameGUI:
         self.incorrect_answers = []
         self.animating = False
         self.game_over = False
+    
+    def pause_game(self):
+        """Pause the current game."""
+        if self.question_start_time:
+            # Save elapsed time before pausing
+            self.paused_time_elapsed = time.time() - self.question_start_time
+        self.state = STATE_PAUSED
+    
+    def resume_game(self):
+        """Resume the paused game."""
+        if self.question_start_time:
+            # Restore the timer by adjusting start time
+            self.question_start_time = time.time() - self.paused_time_elapsed
+        self.state = STATE_PLAYING
     
     def leave_game(self):
         """Leave the current game and save score."""
@@ -823,6 +847,8 @@ class VocabGameGUI:
             self.draw_leaderboard()
         elif self.state == STATE_PLAYING:
             self.draw_game()
+        elif self.state == STATE_PAUSED:
+            self.draw_paused()
         elif self.state == STATE_GAME_OVER:
             self.draw_game_over()
         elif self.state == STATE_REVIEW_INCORRECT:
@@ -1066,6 +1092,13 @@ class VocabGameGUI:
         for particle in self.particles:
             particle.draw(self.screen)
         
+        # Draw pause button
+        pause_color = self.button_hover_color if self.pause_button_hover else self.button_color
+        pygame.draw.rect(self.screen, pause_color, self.pause_button, border_radius=5)
+        pause_text = self.score_font.render("Pause", True, (255, 255, 255))
+        pause_text_rect = pause_text.get_rect(center=self.pause_button.center)
+        self.screen.blit(pause_text, pause_text_rect)
+        
         # Draw leave button
         leave_color = self.incorrect_color if self.leave_button_hover else self.status_color
         pygame.draw.rect(self.screen, leave_color, self.leave_button, border_radius=5)
@@ -1240,6 +1273,42 @@ class VocabGameGUI:
         button_text_rect = button_surface.get_rect(center=self.button_rect.center)
         self.screen.blit(button_surface, button_text_rect)
     
+    def draw_paused(self):
+        """Draw the pause screen."""
+        # Semi-transparent overlay over game
+        overlay = pygame.Surface((self.width, self.height))
+        overlay.set_alpha(200)
+        overlay.fill((20, 30, 40))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Title
+        title_font = pygame.font.Font(None, 72)
+        title = title_font.render("PAUSED", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, 120))
+        self.screen.blit(title, title_rect)
+        
+        # Current score
+        score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
+        if self.streak > 0:
+            score_text += f"  |  Streak: {self.streak}x"
+        score_surface = self.meaning_font.render(score_text, True, self.gray_color)
+        score_rect = score_surface.get_rect(center=(self.width // 2, 180))
+        self.screen.blit(score_surface, score_rect)
+        
+        # Resume button
+        resume_color = self.button_hover_color if self.resume_button_hover else self.button_color
+        pygame.draw.rect(self.screen, resume_color, self.resume_button, border_radius=10)
+        resume_text = self.meaning_font.render("▶ Resume", True, (255, 255, 255))
+        resume_text_rect = resume_text.get_rect(center=self.resume_button.center)
+        self.screen.blit(resume_text, resume_text_rect)
+        
+        # Quit button
+        quit_color = self.button_hover_color if self.quit_button_hover else self.button_color
+        pygame.draw.rect(self.screen, quit_color, self.quit_button, border_radius=10)
+        quit_text = self.meaning_font.render("← Quit to Menu", True, (255, 255, 255))
+        quit_text_rect = quit_text.get_rect(center=self.quit_button.center)
+        self.screen.blit(quit_text, quit_text_rect)
+    
     def draw_review_incorrect(self):
         """Draw the review incorrect answers screen."""
         # Static background (no animation for better performance)
@@ -1341,6 +1410,42 @@ class VocabGameGUI:
         button_text_rect = button_surface.get_rect(center=self.button_rect.center)
         self.screen.blit(button_surface, button_text_rect)
     
+    def draw_paused(self):
+        """Draw the pause screen."""
+        # Semi-transparent overlay over game
+        overlay = pygame.Surface((self.width, self.height))
+        overlay.set_alpha(200)
+        overlay.fill((20, 30, 40))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Title
+        title_font = pygame.font.Font(None, 72)
+        title = title_font.render("PAUSED", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, 120))
+        self.screen.blit(title, title_rect)
+        
+        # Current score
+        score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
+        if self.streak > 0:
+            score_text += f"  |  Streak: {self.streak}x"
+        score_surface = self.meaning_font.render(score_text, True, self.gray_color)
+        score_rect = score_surface.get_rect(center=(self.width // 2, 180))
+        self.screen.blit(score_surface, score_rect)
+        
+        # Resume button
+        resume_color = self.button_hover_color if self.resume_button_hover else self.button_color
+        pygame.draw.rect(self.screen, resume_color, self.resume_button, border_radius=10)
+        resume_text = self.meaning_font.render("▶ Resume", True, (255, 255, 255))
+        resume_text_rect = resume_text.get_rect(center=self.resume_button.center)
+        self.screen.blit(resume_text, resume_text_rect)
+        
+        # Quit button
+        quit_color = self.button_hover_color if self.quit_button_hover else self.button_color
+        pygame.draw.rect(self.screen, quit_color, self.quit_button, border_radius=10)
+        quit_text = self.meaning_font.render("← Quit to Menu", True, (255, 255, 255))
+        quit_text_rect = quit_text.get_rect(center=self.quit_button.center)
+        self.screen.blit(quit_text, quit_text_rect)
+    
     def run(self):
         """Start the game loop."""
         running = True
@@ -1384,8 +1489,13 @@ class VocabGameGUI:
                     if self.state == STATE_LOADING and self.loading_error:
                         if event.key == pygame.K_ESCAPE:
                             running = False
+                    elif self.state == STATE_PAUSED:
+                        if event.key == pygame.K_ESCAPE or event.key == pygame.K_SPACE:
+                            self.resume_game()
                     elif self.state == STATE_PLAYING:
-                        if event.key == pygame.K_RETURN:
+                        if event.key == pygame.K_ESCAPE:
+                            self.pause_game()
+                        elif event.key == pygame.K_RETURN:
                             if self.input_active and not self.animating:
                                 self.check_answer()
                             elif self.can_skip and self.animating:
@@ -1442,7 +1552,15 @@ class VocabGameGUI:
         elif self.state == STATE_PLAYING:
             if self.button_rect.collidepoint(pos) and not self.animating:
                 self.check_answer()
+            elif self.pause_button.collidepoint(pos):
+                self.pause_game()
             elif self.leave_button.collidepoint(pos):
+                self.leave_game()
+        
+        elif self.state == STATE_PAUSED:
+            if self.resume_button.collidepoint(pos):
+                self.resume_game()
+            elif self.quit_button.collidepoint(pos):
                 self.leave_game()
         
         elif self.state == STATE_GAME_OVER:
@@ -1464,7 +1582,12 @@ class VocabGameGUI:
         
         elif self.state == STATE_PLAYING:
             self.button_hover = self.button_rect.collidepoint(pos)
+            self.pause_button_hover = self.pause_button.collidepoint(pos)
             self.leave_button_hover = self.leave_button.collidepoint(pos)
+        
+        elif self.state == STATE_PAUSED:
+            self.resume_button_hover = self.resume_button.collidepoint(pos)
+            self.quit_button_hover = self.quit_button.collidepoint(pos)
         
         elif self.state == STATE_GAME_OVER:
             self.button_hover = self.button_rect.collidepoint(pos)
