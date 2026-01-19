@@ -346,7 +346,7 @@ class VocabGameGUI:
         # Create window
         self.width = 800
         self.height = 650
-        self.screen = pygame.display.set_mode((self.width, self.height))
+        self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
         pygame.display.set_caption("Japanese Vocabulary Quiz")
         
         # Colors
@@ -403,13 +403,13 @@ class VocabGameGUI:
         pygame.key.start_text_input()
         
         # Buttons
-        self.button_rect = pygame.Rect(200, 330, 200, 50)
+        self.button_rect = pygame.Rect(self.width // 2 - 100, 330, 200, 50)
         self.button_hover = False
         
         # Menu buttons
-        self.play_button = pygame.Rect(300, 250, 200, 60)
-        self.leaderboard_button = pygame.Rect(300, 330, 200, 60)
-        self.back_button = pygame.Rect(300, 500, 200, 50)
+        self.play_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
+        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
         self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
         self.play_button_hover = False
@@ -419,8 +419,8 @@ class VocabGameGUI:
         self.pause_button_hover = False
         
         # Pause menu buttons
-        self.resume_button = pygame.Rect(300, 250, 200, 60)
-        self.quit_button = pygame.Rect(300, 330, 200, 60)
+        self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
+        self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
         self.resume_button_hover = False
         self.quit_button_hover = False
         
@@ -531,6 +531,16 @@ class VocabGameGUI:
         except Exception as e:
             self.loading_error = f"Unexpected error: {str(e)}"
             print(self.loading_error)
+    
+    def update_button_positions(self):
+        """Update button positions based on current window size."""
+        self.play_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
+        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
+        self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
+        self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
+        self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
+        self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
     
     def start_game(self):
         """Start a new game."""
@@ -1234,7 +1244,7 @@ class VocabGameGUI:
             self.screen.blit(label_surface, label_rect)
             
             # Draw input box
-            input_rect = pygame.Rect(250, 310, 300, 45)
+            input_rect = pygame.Rect(self.width // 2 - 150, 310, 300, 45)
             pygame.draw.rect(self.screen, (255, 255, 255), input_rect)
             pygame.draw.rect(self.screen, (0, 0, 0), input_rect, 2)
             
@@ -1245,7 +1255,7 @@ class VocabGameGUI:
             self.screen.blit(input_surface, input_text_rect)
             
             # Draw button
-            self.button_rect = pygame.Rect(250, 380, 300, 50)
+            self.button_rect = pygame.Rect(self.width // 2 - 150, 380, 300, 50)
             button_color = self.button_hover_color if self.button_hover else self.button_color
             pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=5)
             button_text = "Submit"
@@ -1319,7 +1329,7 @@ class VocabGameGUI:
                 self.screen.blit(hs_surface, hs_rect)
         
         # Back to menu button
-        self.button_rect = pygame.Rect(200, 380, 200, 50)
+        self.button_rect = pygame.Rect(self.width // 2 - 100, 380, 200, 50)
         button_color = self.button_hover_color if self.button_hover else self.button_color
         pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=10)
         button_surface = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
@@ -1456,7 +1466,7 @@ class VocabGameGUI:
                            border_radius=5)
         
         # Back to menu button
-        self.button_rect = pygame.Rect(300, 580, 200, 50)
+        self.button_rect = pygame.Rect(self.width // 2 - 100, 580, 200, 50)
         button_color = self.button_hover_color if self.button_hover else self.button_color
         pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=10)
         button_surface = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
@@ -1513,6 +1523,14 @@ class VocabGameGUI:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                
+                # Handle window resize
+                elif event.type == pygame.VIDEORESIZE:
+                    self.width = event.w
+                    self.height = event.h
+                    self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
+                    # Update all button positions
+                    self.update_button_positions()
                 
                 # Streak sound event
                 elif event.type == pygame.USEREVENT + 1:
