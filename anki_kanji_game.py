@@ -478,9 +478,26 @@ class VocabGameGUI:
             self.loading_status = "Connecting to Anki..."
             print("Connecting to Anki...")
             
+            # Test connection to AnkiConnect
+            try:
+                deck_names = get_deck_names()
+            except requests.exceptions.ConnectionError:
+                self.loading_error = "Cannot connect to Anki. Please make sure Anki is running and AnkiConnect is installed."
+                print(self.loading_error)
+                return
+            except Exception as conn_err:
+                self.loading_error = f"Connection error: {str(conn_err)}"
+                print(self.loading_error)
+                return
+            
             self.loading_status = f"Loading deck: {self.deck_name}..."
             print(f"Using deck: {self.deck_name}")
             card_ids = get_card_ids(self.deck_name)
+            
+            if not card_ids:
+                self.loading_error = f"Deck '{self.deck_name}' not found or is empty. Please check the deck name in the code."
+                print(self.loading_error)
+                return
             
             self.loading_status = f"Loading {len(card_ids)} cards..."
             cards = get_cards_info(card_ids)
@@ -490,7 +507,7 @@ class VocabGameGUI:
             kanji_cards = [card for card in cards if contains_kanji(card['question']) and card.get('type', 0) != 0]
             
             if not kanji_cards:
-                self.loading_error = "No cards with kanji found in this deck."
+                self.loading_error = "No cards with kanji found in this deck. Try studying some cards first!"
                 print(self.loading_error)
                 return
             
@@ -512,7 +529,7 @@ class VocabGameGUI:
             self.fetch_thread.start()
             
         except Exception as e:
-            self.loading_error = f"Error loading deck: {str(e)}"
+            self.loading_error = f"Unexpected error: {str(e)}"
             print(self.loading_error)
     
     def start_game(self):
@@ -947,14 +964,16 @@ class VocabGameGUI:
         if self.loading_error:
             status_color = self.incorrect_color
             status = self.loading_error
+            # Use wrapped text for errors (they can be long)
+            status_font = pygame.font.Font(None, 24)
+            self.draw_text_wrapped(status, status_font, status_color, self.height // 2 + 20, max_width=700)
         else:
             status_color = self.button_color
             status = self.loading_status
-        
-        status_font = pygame.font.Font(None, 28)
-        status_surface = status_font.render(status, True, status_color)
-        status_rect = status_surface.get_rect(center=(self.width // 2, self.height // 2 + 20))
-        self.screen.blit(status_surface, status_rect)
+            status_font = pygame.font.Font(None, 28)
+            status_surface = status_font.render(status, True, status_color)
+            status_rect = status_surface.get_rect(center=(self.width // 2, self.height // 2 + 20))
+            self.screen.blit(status_surface, status_rect)
         
         # Animated loading bar
         if not self.loading_error:
