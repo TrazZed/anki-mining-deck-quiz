@@ -664,6 +664,12 @@ class VocabGameGUI:
         if self.animating or not self.current_info or not self.input_text.strip():
             return
         
+        # Validate that answer only contains hiragana characters
+        answer = self.input_text.strip()
+        if not all('\u3040' <= c <= '\u309f' for c in answer):
+            # Flash the input to indicate invalid characters
+            return
+        
         self.animating = True
         self.input_active = False
         self.can_skip = True  # Allow skipping to next card
@@ -674,7 +680,7 @@ class VocabGameGUI:
         # Calculate time taken
         time_taken = time.time() - self.question_start_time
         
-        if self.input_text.strip() == correct_reading:
+        if answer == correct_reading:
             self.score += 1
             self.streak += 1
             
