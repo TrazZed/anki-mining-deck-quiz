@@ -611,6 +611,18 @@ class VocabGameGUI:
         self.input_active = True
         self.question_start_time = time.time()  # Start timing the question
     
+    def katakana_to_hiragana(self, text):
+        """Convert katakana characters to hiragana."""
+        result = ""
+        for char in text:
+            # Check if character is katakana (ァ-ヶ)
+            if '\u30a1' <= char <= '\u30f6':
+                # Convert to hiragana by subtracting 0x60
+                result += chr(ord(char) - 0x60)
+            else:
+                result += char
+        return result
+    
     def convert_romaji_to_hiragana(self, romaji):
         """Convert romaji text to hiragana."""
         result = ""
@@ -680,7 +692,11 @@ class VocabGameGUI:
         # Calculate time taken
         time_taken = time.time() - self.question_start_time
         
-        if answer == correct_reading:
+        # Normalize both answers to hiragana for comparison (accept hiragana for katakana)
+        normalized_answer = self.katakana_to_hiragana(answer)
+        normalized_correct = self.katakana_to_hiragana(correct_reading)
+        
+        if normalized_answer == normalized_correct:
             self.score += 1
             self.streak += 1
             
