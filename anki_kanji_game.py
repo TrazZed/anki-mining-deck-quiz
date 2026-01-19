@@ -869,13 +869,19 @@ class VocabGameGUI:
         self.screen.fill(bg_color)
         
         # Draw background particles
-        for i in range(5):
-            x = (self.background_time * 20 + i * 120) % self.width
-            y = 50 + i * 80
+        for i in range(12):
+            # Create pseudo-random but deterministic positions
+            base_x = (self.background_time * 25 + i * 137) % (self.width + 50)
+            base_y = (i * 83) % self.height
+            # Add pseudo-random offset using sine/cosine
+            offset_x = 40 * math.sin(i * 3.14)
+            offset_y = 35 * math.cos(i * 2.71)
+            x = base_x + offset_x
+            y = base_y + offset_y
             alpha = int(50 + 30 * math.sin(self.background_time + i))
             s = pygame.Surface((4, 4), pygame.SRCALPHA)
             pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
-            self.screen.blit(s, (x, y))
+            self.screen.blit(s, (int(x), int(y)))
         
         # Title
         title_font = pygame.font.Font(None, 64)
@@ -916,13 +922,19 @@ class VocabGameGUI:
         self.screen.fill(bg_color)
         
         # Draw animated particles
-        for i in range(10):
-            x = (self.background_time * 50 + i * 80) % self.width
-            y = (i * 65) % self.height
+        for i in range(15):
+            # Create pseudo-random but deterministic positions
+            base_x = (self.background_time * 45 + i * 119) % (self.width + 50)
+            base_y = (i * 71) % self.height
+            # Add pseudo-random offset using sine/cosine
+            offset_x = 35 * math.sin(i * 2.97)
+            offset_y = 30 * math.cos(i * 3.33)
+            x = base_x + offset_x
+            y = base_y + offset_y
             alpha = int(100 + 50 * math.sin(self.background_time * 2 + i))
             size = 3 + int(2 * math.sin(self.background_time * 3 + i * 0.5))
-            s = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
-            pygame.draw.circle(s, (*self.button_color[:3], alpha), (size, size), size)
+            s = pygame.Surface((int(size * 2), int(size * 2)), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.button_color[:3], alpha), (int(size), int(size)), int(size))
             self.screen.blit(s, (int(x), int(y)))
         
         # Title
