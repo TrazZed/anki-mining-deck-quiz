@@ -69,6 +69,7 @@ ROMAJI_TO_HIRAGANA = {
     'wa': 'わ', 'wo': 'を',
     # Special
     'nn': 'ん',
+    '-': 'ー',  # Long vowel mark
 }
 
 # Initialize pygame
@@ -120,6 +121,48 @@ class FireParticle(Particle):
         self.lifetime -= dt
         self.alpha = int(255 * (self.lifetime / self.max_lifetime))
         return self.lifetime > 0
+
+class StarParticle(Particle):
+    """Star-shaped particle for burst effects."""
+    def __init__(self, x, y, velocity_x, velocity_y):
+        colors = [(255, 255, 0), (255, 255, 255), (255, 215, 0), (255, 250, 150)]
+        color = random.choice(colors)
+        lifetime = random.uniform(0.8, 1.5)
+        size = random.uniform(4, 8)
+        super().__init__(x, y, color, velocity_x, velocity_y, lifetime, size)
+        self.rotation = random.uniform(0, 360)
+        self.rotation_speed = random.uniform(-360, 360)
+    
+    def update(self, dt):
+        self.x += self.velocity_x * dt
+        self.y += self.velocity_y * dt
+        self.velocity_y += 150 * dt  # Gravity
+        self.velocity_x *= 0.98  # Air resistance
+        self.velocity_y *= 0.98
+        self.lifetime -= dt
+        self.rotation += self.rotation_speed * dt
+        self.alpha = int(255 * (self.lifetime / self.max_lifetime))
+        return self.lifetime > 0
+    
+    def draw(self, surface):
+        if self.alpha > 0:
+            # Draw a 5-pointed star
+            points = []
+            for i in range(10):
+                angle = math.radians(self.rotation + i * 36)
+                radius = self.size if i % 2 == 0 else self.size * 0.4
+                px = self.x + radius * math.cos(angle)
+                py = self.y + radius * math.sin(angle)
+                points.append((px, py))
+            
+            if len(points) >= 3:
+                s = pygame.Surface((int(self.size * 3), int(self.size * 3)), pygame.SRCALPHA)
+                offset_x = self.size * 1.5
+                offset_y = self.size * 1.5
+                adjusted_points = [(px - self.x + offset_x, py - self.y + offset_y) for px, py in points]
+                color_with_alpha = (*self.color[:3], self.alpha)
+                pygame.draw.polygon(s, color_with_alpha, adjusted_points)
+                surface.blit(s, (int(self.x - offset_x), int(self.y - offset_y)))
 
 # Utility to call AnkiConnect
 
@@ -336,6 +379,11 @@ class VocabGameGUI:
         # Particle system
         self.particles = []
         self.background_time = 0
+        
+        # Screen shake
+        self.screen_shake_x = 0
+        self.screen_shake_y = 0
+        self.screen_shake_intensity = 0
         
         # Sound effects
         try:
@@ -767,14 +815,20 @@ class VocabGameGUI:
         self.feedback_color = self.correct_color
         self.word_color = self.correct_color
         
+        # Screen shake on high streaks (10+)
+        if self.streak >= 10:
+            self.screen_shake_intensity = min(5 + (self.streak - 10) * 2, 40)  # 5-40
+        
         # Play sound
         if self.sound_correct:
             self.sound_correct.play()
         if self.streak >= 5 and self.sound_streak:
             pygame.time.set_timer(pygame.USEREVENT + 1, 100, 1)
         
-        # Create success particles
-        for _ in range(50):
+        # Create success particles - MORE with higher streak
+        particle_count = int(50 * pow(max(1, self.streak), 0.5))  # Square root scaling
+        particle_count = min(particle_count, 300)  # Cap at 300
+        for _ in range(particle_count):
             x = random.randint(0, self.width)
             y = random.randint(0, self.height)
             vx = random.uniform(-150, 150)
@@ -782,6 +836,33 @@ class VocabGameGUI:
             color = self.correct_color
             particle = Particle(x, y, color, vx, vy, random.uniform(0.5, 1.5), random.uniform(3, 8))
             self.particles.append(particle)
+        
+        # Star burst effects from corners at 10+ streak
+        if self.streak >= 10:
+            corners = [
+                (0, 0),  # Top-left
+                (self.width, 0),  # Top-right
+                (0, self.height),  # Bottom-left
+                (self.width, self.height)  # Bottom-right
+            ]
+            star_count = min(15 + self.streak, 40)  # More stars with higher streak
+            for corner_x, corner_y in corners:
+                for _ in range(star_count // 4):
+                    # Stars burst outward from corner
+                    angle = random.uniform(0, math.pi / 2)  # Quarter circle
+                    if corner_x == 0 and corner_y == 0:  # Top-left
+                        angle = random.uniform(0, math.pi / 2)
+                    elif corner_x == self.width and corner_y == 0:  # Top-right
+                        angle = random.uniform(math.pi / 2, math.pi)
+                    elif corner_x == 0 and corner_y == self.height:  # Bottom-left
+                        angle = random.uniform(-math.pi / 2, 0)
+                    else:  # Bottom-right
+                        angle = random.uniform(math.pi, 3 * math.pi / 2)
+                    
+                    speed = random.uniform(100, 300)
+                    vx = speed * math.cos(angle)
+                    vy = speed * math.sin(angle)
+                    self.particles.append(StarParticle(corner_x, corner_y, vx, vy))
         
         # Show meanings
         if self.current_info['meanings']:
@@ -892,8 +973,11 @@ class VocabGameGUI:
         self.status_text = f"Score: {self.score}/{self.total} ({percentage}%) | Points: {self.points} | Avg: {avg_points} pts/card"
         self.input_active = False
     
-    def draw_text_wrapped(self, text, font, color, y_pos, max_width=500):
+    def draw_text_wrapped(self, text, font, color, y_pos, max_width=500, draw_target=None):
         """Draw text with word wrapping."""
+        if draw_target is None:
+            draw_target = self.screen
+        
         words = text.split(' ')
         lines = []
         current_line = []
@@ -913,7 +997,7 @@ class VocabGameGUI:
         for i, line in enumerate(lines):
             text_surface = font.render(line, True, color)
             text_rect = text_surface.get_rect(center=(self.width // 2, y_pos + i * 25))
-            self.screen.blit(text_surface, text_rect)
+            draw_target.blit(text_surface, text_rect)
     
     def draw(self):
         """Draw the UI based on current state."""
@@ -1204,14 +1288,28 @@ class VocabGameGUI:
     
     def draw_game(self):
         """Draw the main game screen."""
-        # Streak-based background animation
+        # Streak-based background animation with rainbow effect at high streaks
         base_color = self.bg_color
-        speed_multiplier = 1.0 + (self.streak * 0.6)  # Increased from 0.2 to 0.6
-        wave_intensity = 10 + (self.streak * 3)  # Increased from 2 to 3
+        speed_multiplier = 1.0 + (self.streak * 0.6)
+        wave_intensity = 10 + (self.streak * 3)
         wave = int(wave_intensity * math.sin(self.background_time * 0.5 * speed_multiplier))
         
+        # Rainbow color shift for 15+ streak
+        if self.streak >= 15:
+            # Calculate RGB values using sine waves with phase offsets for rainbow
+            time_factor = self.background_time * 2
+            r = int(127 + 127 * math.sin(time_factor))
+            g = int(127 + 127 * math.sin(time_factor + 2.094))  # 120 degrees
+            b = int(127 + 127 * math.sin(time_factor + 4.189))  # 240 degrees
+            # Blend with base color
+            blend = 0.3  # 30% rainbow, 70% base
+            bg_color = (
+                max(0, min(255, int(base_color[0] * (1 - blend) + r * blend + wave))),
+                max(0, min(255, int(base_color[1] * (1 - blend) + g * blend + wave))),
+                max(0, min(255, int(base_color[2] * (1 - blend) + b * blend + wave)))
+            )
         # Add color shift for high streaks
-        if self.streak >= 10:
+        elif self.streak >= 10:
             bg_color = (
                 max(0, min(255, base_color[0] + wave + 20)),
                 max(0, min(255, base_color[1] + wave + 10)),
@@ -1230,6 +1328,14 @@ class VocabGameGUI:
                 max(0, min(255, base_color[2] + wave))
             )
         self.screen.fill(bg_color)
+        
+        # Create a surface for screen shake effect
+        if self.screen_shake_intensity > 0:
+            game_surface = pygame.Surface((self.width, self.height))
+            game_surface.fill(bg_color)
+            draw_target = game_surface
+        else:
+            draw_target = self.screen
         
         # Draw background particles (more with higher streak)
         particle_count = 5 + (self.streak * 4)  # More dramatic increase
@@ -1250,49 +1356,49 @@ class VocabGameGUI:
         
         # Draw active particles
         for particle in self.particles:
-            particle.draw(self.screen)
+            particle.draw(draw_target)
         
         # Draw pause button
         pause_color = self.button_hover_color if self.pause_button_hover else self.button_color
-        pygame.draw.rect(self.screen, pause_color, self.pause_button, border_radius=5)
+        pygame.draw.rect(draw_target, pause_color, self.pause_button, border_radius=5)
         pause_text = self.score_font.render("Pause", True, (255, 255, 255))
         pause_text_rect = pause_text.get_rect(center=self.pause_button.center)
-        self.screen.blit(pause_text, pause_text_rect)
+        draw_target.blit(pause_text, pause_text_rect)
         
         # Draw leave button
         leave_color = self.incorrect_color if self.leave_button_hover else self.status_color
-        pygame.draw.rect(self.screen, leave_color, self.leave_button, border_radius=5)
+        pygame.draw.rect(draw_target, leave_color, self.leave_button, border_radius=5)
         leave_text = self.score_font.render("Leave", True, (255, 255, 255))
         leave_text_rect = leave_text.get_rect(center=self.leave_button.center)
-        self.screen.blit(leave_text, leave_text_rect)
+        draw_target.blit(leave_text, leave_text_rect)
         
         # Draw score and points - PROMINENT
         score_bg = pygame.Surface((250, 45), pygame.SRCALPHA)
         score_bg.fill((0, 0, 0, 100))
-        self.screen.blit(score_bg, (10, 5))
+        draw_target.blit(score_bg, (10, 5))
         
         score_font_large = pygame.font.Font(None, 32)
         score_text = f"{self.score}/{self.total}"
         score_surface = score_font_large.render(score_text, True, self.text_color)
-        self.screen.blit(score_surface, (20, 10))
+        draw_target.blit(score_surface, (20, 10))
         
         points_text = f"+{self.points} pts"
         points_surface = self.score_font.render(points_text, True, (255, 215, 0))
-        self.screen.blit(points_surface, (20, 35))
+        draw_target.blit(points_surface, (20, 35))
         
         # Draw streak with fire particles
         if self.streak > 0:
             streak_bg = pygame.Surface((150, 35), pygame.SRCALPHA)
             streak_bg.fill((0, 0, 0, 120))
             streak_rect_bg = streak_bg.get_rect(center=(self.width // 2, 45))
-            self.screen.blit(streak_bg, streak_rect_bg)
+            draw_target.blit(streak_bg, streak_rect_bg)
             
             streak_font_large = pygame.font.Font(None, 36)
             streak_text = f"{self.streak}x Streak"
             streak_color = self.correct_color if self.streak >= 5 else self.text_color
             streak_surface = streak_font_large.render(streak_text, True, streak_color)
             streak_rect = streak_surface.get_rect(center=(self.width // 2, 45))
-            self.screen.blit(streak_surface, streak_rect)
+            draw_target.blit(streak_surface, streak_rect)
             
             # Add fire particles around screen border for high streaks
             if self.streak >= 5:
@@ -1332,43 +1438,43 @@ class VocabGameGUI:
         word_surface = word_font_zoom.render(self.word_text, True, self.word_color)
         word_y = 120 + int(40 * self.word_distance)
         word_rect = word_surface.get_rect(center=(self.width // 2 + self.shake_offset, word_y))
-        self.screen.blit(word_surface, word_rect)
+        draw_target.blit(word_surface, word_rect)
         
         if not self.game_over:
             # Draw "Reading:" label
             label_surface = self.meaning_font.render("Reading:", True, self.text_color)
             label_rect = label_surface.get_rect(center=(self.width // 2, 280))
-            self.screen.blit(label_surface, label_rect)
+            draw_target.blit(label_surface, label_rect)
             
             # Draw input box
             input_rect = pygame.Rect(self.width // 2 - 150, 310, 300, 45)
-            pygame.draw.rect(self.screen, (255, 255, 255), input_rect)
-            pygame.draw.rect(self.screen, (0, 0, 0), input_rect, 2)
+            pygame.draw.rect(draw_target, (255, 255, 255), input_rect)
+            pygame.draw.rect(draw_target, (0, 0, 0), input_rect, 2)
             
             # Draw input text with composition overlay
             display_text = self.input_text + self.composition
             input_surface = self.reading_font.render(display_text, True, (0, 0, 0))
             input_text_rect = input_surface.get_rect(center=input_rect.center)
-            self.screen.blit(input_surface, input_text_rect)
+            draw_target.blit(input_surface, input_text_rect)
             
             # Draw button
             self.button_rect = pygame.Rect(self.width // 2 - 150, 380, 300, 50)
             button_color = self.button_hover_color if self.button_hover else self.button_color
-            pygame.draw.rect(self.screen, button_color, self.button_rect, border_radius=5)
+            pygame.draw.rect(draw_target, button_color, self.button_rect, border_radius=5)
             button_text = "Submit"
             button_surface = self.meaning_font.render(button_text, True, (255, 255, 255))
             button_text_rect = button_surface.get_rect(center=self.button_rect.center)
-            self.screen.blit(button_surface, button_text_rect)
+            draw_target.blit(button_surface, button_text_rect)
         
         # Draw meanings
         if self.meaning_text:
-            self.draw_text_wrapped(self.meaning_text, self.meaning_font, self.meaning_color, 480)
+            self.draw_text_wrapped(self.meaning_text, self.meaning_font, self.meaning_color, 480, draw_target=draw_target)
         
         # Draw status
         if self.status_text:
             status_surface = self.meaning_font.render(self.status_text, True, self.status_color)
             status_rect = status_surface.get_rect(center=(self.width // 2, 600))
-            self.screen.blit(status_surface, status_rect)
+            draw_target.blit(status_surface, status_rect)
         
         # Show correct answer when incorrect (drawn late so it's on top)
         if self.animating and self.animation_type == 'incorrect':
@@ -1376,12 +1482,12 @@ class VocabGameGUI:
                 correct_label_font = pygame.font.Font(None, 32)
                 correct_label = correct_label_font.render("Correct:", True, self.text_color)
                 correct_label_rect = correct_label.get_rect(center=(self.width // 2, 520))
-                self.screen.blit(correct_label, correct_label_rect)
+                draw_target.blit(correct_label, correct_label_rect)
                 
                 correct_font = pygame.font.SysFont(self.reading_font.get_name() if hasattr(self.reading_font, 'get_name') else 'msgothic', 56)
                 correct_surface = correct_font.render(self.correct_answer_text, True, self.incorrect_color)
                 correct_rect = correct_surface.get_rect(center=(self.width // 2, 565))
-                self.screen.blit(correct_surface, correct_rect)
+                draw_target.blit(correct_surface, correct_rect)
         
         # Full-screen flash animation on answer (drawn LAST to cover everything)
         if self.animating and self.animation_type:
@@ -1395,7 +1501,11 @@ class VocabGameGUI:
                 else:
                     flash_surface.fill(self.incorrect_color)
                 flash_surface.set_alpha(flash_alpha)
-                self.screen.blit(flash_surface, (0, 0))
+                draw_target.blit(flash_surface, (0, 0))
+        
+        # Apply screen shake by blitting the game surface with offset
+        if self.screen_shake_intensity > 0:
+            self.screen.blit(game_surface, (int(self.screen_shake_x), int(self.screen_shake_y)))
     
     def draw_game_over(self):
         """Draw the game over screen."""
@@ -1698,6 +1808,16 @@ class VocabGameGUI:
             
             # Update animations
             self.update_animation()
+            
+            # Update screen shake
+            if self.screen_shake_intensity > 0:
+                self.screen_shake_x = random.uniform(-self.screen_shake_intensity, self.screen_shake_intensity)
+                self.screen_shake_y = random.uniform(-self.screen_shake_intensity, self.screen_shake_intensity)
+                self.screen_shake_intensity *= 0.9  # Decay shake
+                if self.screen_shake_intensity < 0.5:
+                    self.screen_shake_intensity = 0
+                    self.screen_shake_x = 0
+                    self.screen_shake_y = 0
             
             # Draw everything
             self.draw()
