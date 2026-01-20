@@ -17,6 +17,8 @@ SAVE_FILE = "vocab_game_save.json"
 
 # Game states
 STATE_LOADING = 'loading'
+STATE_LOADING_SAVE = 'loading_save'
+STATE_SAVING = 'saving'
 STATE_MENU = 'menu'
 STATE_MODE_SELECT = 'mode_select'
 STATE_COUNTDOWN = 'countdown'
@@ -366,6 +368,8 @@ class VocabGameGUI:
         self.loading_deck = (cards is None)
         self.loading_status = "Initializing..."
         self.loading_error = None
+        self.save_load_status = ""  # For save/load operations
+        self.save_load_error = None
         
         # Game state
         self.state = STATE_LOADING if self.loading_deck else STATE_MENU
@@ -649,52 +653,80 @@ class VocabGameGUI:
         self.state = STATE_PLAYING
     
     def save_game(self):
-        """Save the current game state to a file."""
-        # Stop loading thread
-        self.loading = False
-        
-        # Convert Queue to list
-        ready_cards_list = []
-        while not self.ready_cards.empty():
-            ready_cards_list.append(self.ready_cards.get())
-        
-        # Calculate elapsed time for current question
-        elapsed_time = 0
-        if self.question_start_time:
-            elapsed_time = time.time() - self.question_start_time
-        
-        save_data = {
-            'deck_name': self.deck_name,
-            'game_mode': self.game_mode,
-            'current_index': self.current_index,
-            'score': self.score,
-            'points': self.points,
-            'total': self.total,
-            'streak': self.streak,
-            'incorrect_answers': self.incorrect_answers,
-            'cards': self.cards,  # Shuffled card list
-            'ready_cards': ready_cards_list,  # Preloaded cards
-            'current_info': self.current_info,
-            'elapsed_time': elapsed_time,
-            'word_text': self.word_text if hasattr(self, 'word_text') else '',
-            'timestamp': datetime.now().isoformat()
-        }
-        
+        """Initiate save game in background thread."""
+        self.state = STATE_SAVING
+        self.save_load_status = "Saving game..."
+        self.save_load_error = None
+        save_thread = threading.Thread(target=self._save_game_thread, daemon=True)
+        save_thread.start()
+    
+    def _save_game_thread(self):
+        """Save the current game state to a file (runs in background thread)."""
         try:
+            # Stop loading thread
+            self.loading = False
+            
+            # Convert Queue to list
+            ready_cards_list = []
+            temp_queue = Queue()
+            while not self.ready_cards.empty():
+                card = self.ready_cards.get()
+                ready_cards_list.append(card)
+                temp_queue.put(card)
+            self.ready_cards = temp_queue  # Restore queue
+            
+            # Calculate elapsed time for current question
+            elapsed_time = 0
+            if self.question_start_time:
+                elapsed_time = time.time() - self.question_start_time
+            
+            save_data = {
+                'deck_name': self.deck_name,
+                'game_mode': self.game_mode,
+                'current_index': self.current_index,
+                'score': self.score,
+                'points': self.points,
+                'total': self.total,
+                'streak': self.streak,
+                'incorrect_answers': self.incorrect_answers,
+                'cards': self.cards,  # Shuffled card list
+                'ready_cards': ready_cards_list,  # Preloaded cards
+                'current_info': self.current_info,
+                'elapsed_time': elapsed_time,
+                'word_text': self.word_text if hasattr(self, 'word_text') else '',
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            self.save_load_status = "Writing to file..."
             with open(SAVE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(save_data, f, indent=2, ensure_ascii=False)
+            
             print(f"Game saved to {SAVE_FILE}")
-            return True
+            self.save_load_status = "Game saved!"
+            time.sleep(0.5)  # Brief pause to show success message
+            self.state = STATE_MENU
         except Exception as e:
             print(f"Error saving game: {e}")
-            return False
+            self.save_load_error = f"Failed to save: {str(e)}"
+            time.sleep(2)  # Show error longer
+            self.state = STATE_MENU
     
     def load_game(self):
-        """Load game state from file."""
+        """Initiate load game in background thread."""
+        self.state = STATE_LOADING_SAVE
+        self.save_load_status = "Loading saved game..."
+        self.save_load_error = None
+        load_thread = threading.Thread(target=self._load_game_thread, daemon=True)
+        load_thread.start()
+    
+    def _load_game_thread(self):
+        """Load game state from file (runs in background thread)."""
         try:
+            self.save_load_status = "Reading save file..."
             with open(SAVE_FILE, 'r', encoding='utf-8') as f:
                 save_data = json.load(f)
             
+            self.save_load_status = "Restoring game state..."
             # Restore game state
             self.deck_name = save_data['deck_name']
             self.game_mode = save_data['game_mode']
@@ -727,22 +759,27 @@ class VocabGameGUI:
             self.animating = False
             self.game_over = False
             
+            self.save_load_status = "Starting game..."
             # Restart background loading thread
             self.loading = True
             self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
             self.fetch_thread.start()
             
+            time.sleep(0.3)  # Brief pause for smooth transition
             # Go directly to playing state
             self.state = STATE_PLAYING
             
             print(f"Game loaded from {SAVE_FILE}")
-            return True
         except FileNotFoundError:
             print("No save file found")
-            return False
+            self.save_load_error = "No save file found"
+            time.sleep(1.5)
+            self.state = STATE_MENU
         except Exception as e:
             print(f"Error loading game: {e}")
-            return False
+            self.save_load_error = f"Failed to load: {str(e)}"
+            time.sleep(2)
+            self.state = STATE_MENU
     
     @staticmethod
     def has_save_file():
@@ -1128,6 +1165,10 @@ class VocabGameGUI:
         """Draw the UI based on current state."""
         if self.state == STATE_LOADING:
             self.draw_loading()
+        elif self.state == STATE_LOADING_SAVE:
+            self.draw_loading_save()
+        elif self.state == STATE_SAVING:
+            self.draw_saving()
         elif self.state == STATE_MENU:
             self.draw_menu()
         elif self.state == STATE_MODE_SELECT:
@@ -1345,6 +1386,130 @@ class VocabGameGUI:
             hint_surface = self.meaning_font.render(hint_text, True, self.gray_color)
             hint_rect = hint_surface.get_rect(center=(self.width // 2, self.height // 2 + 80))
             self.screen.blit(hint_surface, hint_rect)
+    
+    def draw_loading_save(self):
+        """Draw the loading save screen."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(15 * math.sin(self.background_time * 2))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw animated particles
+        for i in range(15):
+            base_x = (self.background_time * 45 + i * 119) % (self.width + 50)
+            base_y = (i * 71) % self.height
+            offset_x = 35 * math.sin(i * 2.97)
+            offset_y = 30 * math.cos(i * 3.33)
+            x = base_x + offset_x
+            y = base_y + offset_y
+            alpha = int(100 + 50 * math.sin(self.background_time * 2 + i))
+            size = 3 + int(2 * math.sin(self.background_time * 3 + i * 0.5))
+            s = pygame.Surface((int(size * 2), int(size * 2)), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.correct_color[:3], alpha), (int(size), int(size)), int(size))
+            self.screen.blit(s, (int(x), int(y)))
+        
+        # Title
+        title_font = pygame.font.Font(None, 64)
+        title = title_font.render("Loading Game...", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, self.height // 2 - 50))
+        self.screen.blit(title, title_rect)
+        
+        # Status
+        if self.save_load_error:
+            status_color = self.incorrect_color
+            status = self.save_load_error
+        else:
+            status_color = self.correct_color
+            status = self.save_load_status
+        
+        status_font = pygame.font.Font(None, 28)
+        status_surface = status_font.render(status, True, status_color)
+        status_rect = status_surface.get_rect(center=(self.width // 2, self.height // 2 + 20))
+        self.screen.blit(status_surface, status_rect)
+        
+        # Animated loading bar
+        if not self.save_load_error:
+            bar_width = 400
+            bar_height = 20
+            bar_x = (self.width - bar_width) // 2
+            bar_y = self.height // 2 + 70
+            
+            pygame.draw.rect(self.screen, self.gray_color, 
+                           (bar_x, bar_y, bar_width, bar_height), 
+                           border_radius=10)
+            
+            progress_width = 100
+            progress_x = bar_x + int((bar_width - progress_width) * (0.5 + 0.5 * math.sin(self.background_time * 3)))
+            pygame.draw.rect(self.screen, self.correct_color,
+                           (progress_x, bar_y, progress_width, bar_height),
+                           border_radius=10)
+    
+    def draw_saving(self):
+        """Draw the saving screen."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(15 * math.sin(self.background_time * 2))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw animated particles
+        for i in range(15):
+            base_x = (self.background_time * 45 + i * 119) % (self.width + 50)
+            base_y = (i * 71) % self.height
+            offset_x = 35 * math.sin(i * 2.97)
+            offset_y = 30 * math.cos(i * 3.33)
+            x = base_x + offset_x
+            y = base_y + offset_y
+            alpha = int(100 + 50 * math.sin(self.background_time * 2 + i))
+            size = 3 + int(2 * math.sin(self.background_time * 3 + i * 0.5))
+            s = pygame.Surface((int(size * 2), int(size * 2)), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.correct_color[:3], alpha), (int(size), int(size)), int(size))
+            self.screen.blit(s, (int(x), int(y)))
+        
+        # Title
+        title_font = pygame.font.Font(None, 64)
+        title = title_font.render("Saving Game...", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, self.height // 2 - 50))
+        self.screen.blit(title, title_rect)
+        
+        # Status
+        if self.save_load_error:
+            status_color = self.incorrect_color
+            status = self.save_load_error
+        else:
+            status_color = self.correct_color
+            status = self.save_load_status
+        
+        status_font = pygame.font.Font(None, 28)
+        status_surface = status_font.render(status, True, status_color)
+        status_rect = status_surface.get_rect(center=(self.width // 2, self.height // 2 + 20))
+        self.screen.blit(status_surface, status_rect)
+        
+        # Animated loading bar
+        if not self.save_load_error:
+            bar_width = 400
+            bar_height = 20
+            bar_x = (self.width - bar_width) // 2
+            bar_y = self.height // 2 + 70
+            
+            pygame.draw.rect(self.screen, self.gray_color, 
+                           (bar_x, bar_y, bar_width, bar_height), 
+                           border_radius=10)
+            
+            progress_width = 100
+            progress_x = bar_x + int((bar_width - progress_width) * (0.5 + 0.5 * math.sin(self.background_time * 3)))
+            pygame.draw.rect(self.screen, self.correct_color,
+                           (progress_x, bar_y, progress_width, bar_height),
+                           border_radius=10)
     
     def draw_countdown(self):
         """Draw the countdown screen."""
@@ -1963,8 +2128,7 @@ class VocabGameGUI:
             if self.resume_button.collidepoint(pos):
                 self.resume_game()
             elif self.save_quit_button.collidepoint(pos):
-                if self.save_game():
-                    self.state = STATE_MENU
+                self.save_game()
             elif self.quit_button.collidepoint(pos):
                 self.leave_game()
         
