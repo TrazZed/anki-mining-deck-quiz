@@ -246,7 +246,7 @@ def get_high_scores():
 def get_jisho_info(word):
     """
     Query Jisho.org for word information.
-    Returns a dict with 'word', 'reading', and 'meanings', or None if not found.
+    Returns a dict with 'word', 'readings' (list), and 'meanings', or None if not found.
     """
     url = f"https://jisho.org/api/v1/search/words?keyword={word}"
     try:
@@ -254,31 +254,39 @@ def get_jisho_info(word):
         if resp.status_code != 200:
             return None
         data = resp.json()
-        # Find the first matching entry
+        # Find all matching entries for this word
         entries = data.get('data', [])
         if not entries:
             return None
         
-        entry = entries[0]
-        japanese = entry.get('japanese', [])
-        if not japanese:
+        word_text = word
+        readings = []
+        all_meanings = []
+        
+        # Collect all readings from all entries that match the word
+        for entry in entries:
+            japanese = entry.get('japanese', [])
+            for jp in japanese:
+                if jp.get('word') == word or not jp.get('word'):
+                    word_text = jp.get('word', word)
+                    reading = jp.get('reading', '')
+                    if reading and reading not in readings:
+                        readings.append(reading)
+            
+            # Get English meanings from first entry only
+            if not all_meanings:
+                senses = entry.get('senses', [])
+                for sense in senses:
+                    eng_defs = sense.get('english_definitions', [])
+                    all_meanings.extend(eng_defs)
+        
+        if not readings:
             return None
-        
-        # Get the word and reading
-        word_text = japanese[0].get('word', word)
-        reading = japanese[0].get('reading', '')
-        
-        # Get English meanings
-        senses = entry.get('senses', [])
-        meanings = []
-        for sense in senses:
-            eng_defs = sense.get('english_definitions', [])
-            meanings.extend(eng_defs)
         
         return {
             'word': word_text,
-            'reading': reading,
-            'meanings': meanings[:3]  # Limit to first 3 meanings
+            'readings': readings,  # Now a list of all valid readings
+            'meanings': all_meanings[:3]  # Limit to first 3 meanings
         }
     except Exception as e:
         print(f"Error fetching from Jisho: {e}")
@@ -461,7 +469,7 @@ class VocabGameGUI:
                 word = strip_html(card['question'])
                 info = get_jisho_info(word)
                 
-                if info and info['reading']:
+                if info and info['readings']:
                     self.ready_cards.put(info)
                     print(f"Preloaded card {self.current_index + 1}/{len(self.cards)}: {info['word']}")
                 
@@ -696,17 +704,19 @@ class VocabGameGUI:
         self.input_active = False
         self.can_skip = True  # Allow skipping to next card
         
-        correct_reading = self.current_info['reading']
+        correct_readings = self.current_info['readings']
         self.total += 1
         
         # Calculate time taken
         time_taken = time.time() - self.question_start_time
         
-        # Normalize both answers to hiragana for comparison (accept hiragana for katakana)
+        # Normalize answer to hiragana for comparison (accept hiragana for katakana)
         normalized_answer = self.katakana_to_hiragana(answer)
-        normalized_correct = self.katakana_to_hiragana(correct_reading)
         
-        if normalized_answer == normalized_correct:
+        # Check if answer matches any of the valid readings
+        is_correct = any(normalized_answer == self.katakana_to_hiragana(reading) for reading in correct_readings)
+        
+        if is_correct:
             self.score += 1
             self.streak += 1
             
@@ -733,7 +743,7 @@ class VocabGameGUI:
         else:
             self.streak = 0  # Reset streak on wrong answer
             self.last_points_earned = 0
-            self.animate_incorrect(correct_reading)
+            self.animate_incorrect(correct_readings)
     
     def animate_correct(self):
         """Animate correct answer."""
@@ -763,18 +773,19 @@ class VocabGameGUI:
             self.meaning_text = "Meanings: " + ", ".join(self.current_info['meanings'])
             self.meaning_color = self.correct_color
     
-    def animate_incorrect(self, correct_reading):
+    def animate_incorrect(self, correct_readings):
         """Animate incorrect answer."""
         self.animation_type = 'incorrect'
         self.animation_start = pygame.time.get_ticks()
-        self.correct_answer_text = correct_reading
+        # Display all valid readings separated by ' / '
+        self.correct_answer_text = ' / '.join(correct_readings)
         self.feedback_color = self.incorrect_color
         self.word_color = self.incorrect_color
         
         # Track incorrect answer
         self.incorrect_answers.append({
             'word': self.current_info['word'],
-            'correct_reading': correct_reading,
+            'correct_reading': ' / '.join(correct_readings),
             'your_answer': self.input_text.strip()
         })
         
