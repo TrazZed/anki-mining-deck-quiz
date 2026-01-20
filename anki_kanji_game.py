@@ -16,6 +16,7 @@ ANKI_CONNECT_URL = "http://localhost:8765"
 # Game states
 STATE_LOADING = 'loading'
 STATE_MENU = 'menu'
+STATE_MODE_SELECT = 'mode_select'
 STATE_COUNTDOWN = 'countdown'
 STATE_PLAYING = 'playing'
 STATE_PAUSED = 'paused'
@@ -326,6 +327,7 @@ class VocabGameGUI:
         self.high_scores = []
         self.countdown_start = 0
         self.countdown_number = 3
+        self.game_mode = 'normal'  # 'normal' or 'fast'
         
         # Word zoom animation
         self.word_zoom = 0.2  # 0.0 to 1.0
@@ -431,6 +433,12 @@ class VocabGameGUI:
         self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
         self.resume_button_hover = False
         self.quit_button_hover = False
+        
+        # Mode selection buttons
+        self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
+        self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
+        self.normal_mode_hover = False
+        self.fast_mode_hover = False
         
         # Review screen scroll
         self.review_scroll = 0
@@ -549,9 +557,16 @@ class VocabGameGUI:
         self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
         self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
         self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
+        self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
     
     def start_game(self):
-        """Start a new game."""
+        """Go to mode selection."""
+        self.state = STATE_MODE_SELECT
+    
+    def start_game_with_mode(self, mode):
+        """Start a new game with the selected mode."""
+        self.game_mode = mode
         self.state = STATE_COUNTDOWN
         self.countdown_start = pygame.time.get_ticks()
         self.countdown_number = 3
@@ -813,6 +828,11 @@ class VocabGameGUI:
         if not self.animating:
             return
         
+        # Fast mode: skip all animations and go straight to next word
+        if self.game_mode == 'fast':
+            self.next_word()
+            return
+        
         elapsed = pygame.time.get_ticks() - self.animation_start
         
         if self.animation_type == 'correct':
@@ -901,6 +921,8 @@ class VocabGameGUI:
             self.draw_loading()
         elif self.state == STATE_MENU:
             self.draw_menu()
+        elif self.state == STATE_MODE_SELECT:
+            self.draw_mode_select()
         elif self.state == STATE_COUNTDOWN:
             self.draw_countdown()
         elif self.state == STATE_LEADERBOARD:
@@ -968,6 +990,70 @@ class VocabGameGUI:
         lb_text = self.meaning_font.render("🏆 Leaderboard", True, (255, 255, 255))
         lb_text_rect = lb_text.get_rect(center=self.leaderboard_button.center)
         self.screen.blit(lb_text, lb_text_rect)
+    
+    def draw_mode_select(self):
+        """Draw the mode selection screen."""
+        # Animated background
+        base_color = self.bg_color
+        wave = int(10 * math.sin(self.background_time * 0.5))
+        bg_color = (
+            max(0, min(255, base_color[0] + wave)),
+            max(0, min(255, base_color[1] + wave)),
+            max(0, min(255, base_color[2] + wave))
+        )
+        self.screen.fill(bg_color)
+        
+        # Draw background particles
+        for i in range(12):
+            base_x = (self.background_time * 25 + i * 137) % (self.width + 50)
+            base_y = (i * 83) % self.height
+            offset_x = 40 * math.sin(i * 3.14)
+            offset_y = 35 * math.cos(i * 2.71)
+            x = base_x + offset_x
+            y = base_y + offset_y
+            alpha = int(50 + 30 * math.sin(self.background_time + i))
+            s = pygame.Surface((4, 4), pygame.SRCALPHA)
+            pygame.draw.circle(s, (*self.text_color[:3], alpha), (2, 2), 2)
+            self.screen.blit(s, (int(x), int(y)))
+        
+        # Title
+        title_font = pygame.font.Font(None, 56)
+        title = title_font.render("Select Game Mode", True, self.text_color)
+        title_rect = title.get_rect(center=(self.width // 2, 120))
+        self.screen.blit(title, title_rect)
+        
+        # Normal mode button
+        normal_color = self.button_hover_color if self.normal_mode_hover else self.button_color
+        pygame.draw.rect(self.screen, normal_color, self.normal_mode_button, border_radius=10)
+        normal_title = pygame.font.Font(None, 36).render("Normal", True, (255, 255, 255))
+        normal_title_rect = normal_title.get_rect(center=(self.normal_mode_button.centerx, self.normal_mode_button.centery - 15))
+        self.screen.blit(normal_title, normal_title_rect)
+        normal_desc = self.score_font.render("Full animations", True, (255, 255, 255))
+        normal_desc_rect = normal_desc.get_rect(center=(self.normal_mode_button.centerx, self.normal_mode_button.centery + 10))
+        self.screen.blit(normal_desc, normal_desc_rect)
+        normal_desc2 = self.score_font.render("& feedback", True, (255, 255, 255))
+        normal_desc2_rect = normal_desc2.get_rect(center=(self.normal_mode_button.centerx, self.normal_mode_button.centery + 28))
+        self.screen.blit(normal_desc2, normal_desc2_rect)
+        
+        # Fast mode button
+        fast_color = self.button_hover_color if self.fast_mode_hover else self.correct_color
+        pygame.draw.rect(self.screen, fast_color, self.fast_mode_button, border_radius=10)
+        fast_title = pygame.font.Font(None, 36).render("Fast", True, (255, 255, 255))
+        fast_title_rect = fast_title.get_rect(center=(self.fast_mode_button.centerx, self.fast_mode_button.centery - 15))
+        self.screen.blit(fast_title, fast_title_rect)
+        fast_desc = self.score_font.render("No animations", True, (255, 255, 255))
+        fast_desc_rect = fast_desc.get_rect(center=(self.fast_mode_button.centerx, self.fast_mode_button.centery + 10))
+        self.screen.blit(fast_desc, fast_desc_rect)
+        fast_desc2 = self.score_font.render("Instant next word", True, (255, 255, 255))
+        fast_desc2_rect = fast_desc2.get_rect(center=(self.fast_mode_button.centerx, self.fast_mode_button.centery + 28))
+        self.screen.blit(fast_desc2, fast_desc2_rect)
+        
+        # Back button
+        back_color = self.button_hover_color if self.back_button_hover else self.status_color
+        pygame.draw.rect(self.screen, back_color, self.back_button, border_radius=10)
+        back_text = self.meaning_font.render("← Back", True, (255, 255, 255))
+        back_text_rect = back_text.get_rect(center=self.back_button.center)
+        self.screen.blit(back_text, back_text_rect)
     
     def draw_loading(self):
         """Draw the loading screen."""
@@ -1627,6 +1713,14 @@ class VocabGameGUI:
                 self.state = STATE_LEADERBOARD
                 self.high_scores = get_high_scores()
         
+        elif self.state == STATE_MODE_SELECT:
+            if self.normal_mode_button.collidepoint(pos):
+                self.start_game_with_mode('normal')
+            elif self.fast_mode_button.collidepoint(pos):
+                self.start_game_with_mode('fast')
+            elif self.back_button.collidepoint(pos):
+                self.state = STATE_MENU
+        
         elif self.state == STATE_LEADERBOARD:
             if self.back_button.collidepoint(pos):
                 self.state = STATE_MENU
@@ -1658,6 +1752,11 @@ class VocabGameGUI:
         if self.state == STATE_MENU:
             self.play_button_hover = self.play_button.collidepoint(pos)
             self.leaderboard_button_hover = self.leaderboard_button.collidepoint(pos)
+        
+        elif self.state == STATE_MODE_SELECT:
+            self.normal_mode_hover = self.normal_mode_button.collidepoint(pos)
+            self.fast_mode_hover = self.fast_mode_button.collidepoint(pos)
+            self.back_button_hover = self.back_button.collidepoint(pos)
         
         elif self.state == STATE_LEADERBOARD:
             self.back_button_hover = self.back_button.collidepoint(pos)
