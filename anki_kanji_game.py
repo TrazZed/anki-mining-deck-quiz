@@ -10,8 +10,10 @@ import csv
 import os
 from datetime import datetime
 import math
+import json
 
 ANKI_CONNECT_URL = "http://localhost:8765"
+SAVE_FILE = "vocab_game_save.json"
 
 # Game states
 STATE_LOADING = 'loading'
@@ -466,11 +468,13 @@ class VocabGameGUI:
         
         # Menu buttons
         self.play_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
-        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.resume_game_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
         self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
         self.play_button_hover = False
+        self.resume_game_button_hover = False
         self.leaderboard_button_hover = False
         self.back_button_hover = False
         self.leave_button_hover = False
@@ -478,8 +482,10 @@ class VocabGameGUI:
         
         # Pause menu buttons
         self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
-        self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.save_quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.quit_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.resume_button_hover = False
+        self.save_quit_button_hover = False
         self.quit_button_hover = False
         
         # Mode selection buttons
@@ -599,12 +605,14 @@ class VocabGameGUI:
     def update_button_positions(self):
         """Update button positions based on current window size."""
         self.play_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
-        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.resume_game_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
         self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
         self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
-        self.quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.save_quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
+        self.quit_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
         self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
     
@@ -640,12 +648,126 @@ class VocabGameGUI:
             self.question_start_time = time.time() - self.paused_time_elapsed
         self.state = STATE_PLAYING
     
+    def save_game(self):
+        """Save the current game state to a file."""
+        # Stop loading thread
+        self.loading = False
+        
+        # Convert Queue to list
+        ready_cards_list = []
+        while not self.ready_cards.empty():
+            ready_cards_list.append(self.ready_cards.get())
+        
+        # Calculate elapsed time for current question
+        elapsed_time = 0
+        if self.question_start_time:
+            elapsed_time = time.time() - self.question_start_time
+        
+        save_data = {
+            'deck_name': self.deck_name,
+            'game_mode': self.game_mode,
+            'current_index': self.current_index,
+            'score': self.score,
+            'points': self.points,
+            'total': self.total,
+            'streak': self.streak,
+            'incorrect_answers': self.incorrect_answers,
+            'cards': self.cards,  # Shuffled card list
+            'ready_cards': ready_cards_list,  # Preloaded cards
+            'current_info': self.current_info,
+            'elapsed_time': elapsed_time,
+            'word_text': self.word_text if hasattr(self, 'word_text') else '',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        try:
+            with open(SAVE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(save_data, f, indent=2, ensure_ascii=False)
+            print(f"Game saved to {SAVE_FILE}")
+            return True
+        except Exception as e:
+            print(f"Error saving game: {e}")
+            return False
+    
+    def load_game(self):
+        """Load game state from file."""
+        try:
+            with open(SAVE_FILE, 'r', encoding='utf-8') as f:
+                save_data = json.load(f)
+            
+            # Restore game state
+            self.deck_name = save_data['deck_name']
+            self.game_mode = save_data['game_mode']
+            self.current_index = save_data['current_index']
+            self.score = save_data['score']
+            self.points = save_data['points']
+            self.total = save_data['total']
+            self.streak = save_data['streak']
+            self.incorrect_answers = save_data['incorrect_answers']
+            self.cards = save_data['cards']
+            self.current_info = save_data['current_info']
+            self.word_text = save_data.get('word_text', '')
+            
+            # Restore ready cards queue
+            self.ready_cards = Queue()
+            for card_info in save_data['ready_cards']:
+                self.ready_cards.put(card_info)
+            
+            # Restore timer
+            elapsed = save_data.get('elapsed_time', 0)
+            self.question_start_time = time.time() - elapsed
+            self.paused_time_elapsed = elapsed
+            
+            # Reset UI state
+            self.input_text = ""
+            self.composition = ""
+            self.romaji_buffer = ""
+            self.input_active = True
+            self.word_color = self.text_color
+            self.animating = False
+            self.game_over = False
+            
+            # Restart background loading thread
+            self.loading = True
+            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
+            self.fetch_thread.start()
+            
+            # Go directly to playing state
+            self.state = STATE_PLAYING
+            
+            print(f"Game loaded from {SAVE_FILE}")
+            return True
+        except FileNotFoundError:
+            print("No save file found")
+            return False
+        except Exception as e:
+            print(f"Error loading game: {e}")
+            return False
+    
+    @staticmethod
+    def has_save_file():
+        """Check if a save file exists."""
+        return os.path.isfile(SAVE_FILE)
+    
+    @staticmethod
+    def delete_save_file():
+        """Delete the save file."""
+        try:
+            if os.path.isfile(SAVE_FILE):
+                os.remove(SAVE_FILE)
+                print(f"Deleted {SAVE_FILE}")
+        except Exception as e:
+            print(f"Error deleting save file: {e}")
+    
     def leave_game(self):
         """Leave the current game and save score."""
         if self.total > 0:  # Only save if at least one question was answered
             percentage = int(self.score / self.total * 100)
             avg_points = int(self.points / self.total)
             save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
+        
+        # Delete save file when leaving
+        self.delete_save_file()
         
         # Show incorrect answers if there are any
         if self.incorrect_answers:
@@ -967,6 +1089,9 @@ class VocabGameGUI:
         # Save score to CSV
         save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
         
+        # Delete save file when game completes naturally
+        self.delete_save_file()
+        
         # Get high scores
         self.high_scores = get_high_scores()
         
@@ -1067,6 +1192,14 @@ class VocabGameGUI:
         play_text = self.meaning_font.render("Play", True, (255, 255, 255))
         play_text_rect = play_text.get_rect(center=self.play_button.center)
         self.screen.blit(play_text, play_text_rect)
+        
+        # Resume Game button (only if save file exists)
+        if self.has_save_file():
+            resume_color = self.button_hover_color if self.resume_game_button_hover else self.correct_color
+            pygame.draw.rect(self.screen, resume_color, self.resume_game_button, border_radius=10)
+            resume_text = self.meaning_font.render("▶ Resume Game", True, (255, 255, 255))
+            resume_text_rect = resume_text.get_rect(center=self.resume_game_button.center)
+            self.screen.blit(resume_text, resume_text_rect)
         
         # Leaderboard button
         lb_color = self.button_hover_color if self.leaderboard_button_hover else self.button_color
@@ -1572,8 +1705,15 @@ class VocabGameGUI:
         resume_text_rect = resume_text.get_rect(center=self.resume_button.center)
         self.screen.blit(resume_text, resume_text_rect)
         
+        # Save & Quit button
+        save_quit_color = self.button_hover_color if self.save_quit_button_hover else self.correct_color
+        pygame.draw.rect(self.screen, save_quit_color, self.save_quit_button, border_radius=10)
+        save_quit_text = self.meaning_font.render("💾 Save & Quit", True, (255, 255, 255))
+        save_quit_text_rect = save_quit_text.get_rect(center=self.save_quit_button.center)
+        self.screen.blit(save_quit_text, save_quit_text_rect)
+        
         # Quit button
-        quit_color = self.button_hover_color if self.quit_button_hover else self.button_color
+        quit_color = self.button_hover_color if self.quit_button_hover else self.incorrect_color
         pygame.draw.rect(self.screen, quit_color, self.quit_button, border_radius=10)
         quit_text = self.meaning_font.render("← Quit to Menu", True, (255, 255, 255))
         quit_text_rect = quit_text.get_rect(center=self.quit_button.center)
@@ -1679,42 +1819,6 @@ class VocabGameGUI:
         button_surface = self.meaning_font.render("← Back to Menu", True, (255, 255, 255))
         button_text_rect = button_surface.get_rect(center=self.button_rect.center)
         self.screen.blit(button_surface, button_text_rect)
-    
-    def draw_paused(self):
-        """Draw the pause screen."""
-        # Semi-transparent overlay over game
-        overlay = pygame.Surface((self.width, self.height))
-        overlay.set_alpha(200)
-        overlay.fill((20, 30, 40))
-        self.screen.blit(overlay, (0, 0))
-        
-        # Title
-        title_font = pygame.font.Font(None, 72)
-        title = title_font.render("PAUSED", True, self.text_color)
-        title_rect = title.get_rect(center=(self.width // 2, 120))
-        self.screen.blit(title, title_rect)
-        
-        # Current score
-        score_text = f"Score: {self.score}/{self.total}  |  Points: {self.points}"
-        if self.streak > 0:
-            score_text += f"  |  Streak: {self.streak}x"
-        score_surface = self.meaning_font.render(score_text, True, self.gray_color)
-        score_rect = score_surface.get_rect(center=(self.width // 2, 180))
-        self.screen.blit(score_surface, score_rect)
-        
-        # Resume button
-        resume_color = self.button_hover_color if self.resume_button_hover else self.button_color
-        pygame.draw.rect(self.screen, resume_color, self.resume_button, border_radius=10)
-        resume_text = self.meaning_font.render("▶ Resume", True, (255, 255, 255))
-        resume_text_rect = resume_text.get_rect(center=self.resume_button.center)
-        self.screen.blit(resume_text, resume_text_rect)
-        
-        # Quit button
-        quit_color = self.button_hover_color if self.quit_button_hover else self.button_color
-        pygame.draw.rect(self.screen, quit_color, self.quit_button, border_radius=10)
-        quit_text = self.meaning_font.render("← Quit to Menu", True, (255, 255, 255))
-        quit_text_rect = quit_text.get_rect(center=self.quit_button.center)
-        self.screen.blit(quit_text, quit_text_rect)
     
     def run(self):
         """Start the game loop."""
@@ -1829,6 +1933,8 @@ class VocabGameGUI:
         if self.state == STATE_MENU:
             if self.play_button.collidepoint(pos):
                 self.start_game()
+            elif self.has_save_file() and self.resume_game_button.collidepoint(pos):
+                self.load_game()
             elif self.leaderboard_button.collidepoint(pos):
                 self.state = STATE_LEADERBOARD
                 self.high_scores = get_high_scores()
@@ -1856,6 +1962,9 @@ class VocabGameGUI:
         elif self.state == STATE_PAUSED:
             if self.resume_button.collidepoint(pos):
                 self.resume_game()
+            elif self.save_quit_button.collidepoint(pos):
+                if self.save_game():
+                    self.state = STATE_MENU
             elif self.quit_button.collidepoint(pos):
                 self.leave_game()
         
@@ -1871,6 +1980,7 @@ class VocabGameGUI:
         """Update button hover states based on mouse position."""
         if self.state == STATE_MENU:
             self.play_button_hover = self.play_button.collidepoint(pos)
+            self.resume_game_button_hover = self.resume_game_button.collidepoint(pos)
             self.leaderboard_button_hover = self.leaderboard_button.collidepoint(pos)
         
         elif self.state == STATE_MODE_SELECT:
@@ -1888,6 +1998,7 @@ class VocabGameGUI:
         
         elif self.state == STATE_PAUSED:
             self.resume_button_hover = self.resume_button.collidepoint(pos)
+            self.save_quit_button_hover = self.save_quit_button.collidepoint(pos)
             self.quit_button_hover = self.quit_button.collidepoint(pos)
         
         elif self.state == STATE_GAME_OVER:
