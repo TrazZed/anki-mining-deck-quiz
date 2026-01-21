@@ -492,6 +492,10 @@ class VocabGameGUI:
         self.save_quit_button_hover = False
         self.quit_button_hover = False
         
+        # Retry button for connection errors
+        self.retry_button = pygame.Rect(self.width // 2 - 100, self.height // 2 + 80, 200, 50)
+        self.retry_button_hover = False
+        
         # Mode selection buttons
         self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
         self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
@@ -619,6 +623,7 @@ class VocabGameGUI:
         self.quit_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
         self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
+        self.retry_button = pygame.Rect(self.width // 2 - 100, self.height // 2 + 80, 200, 50)
     
     def start_game(self):
         """Go to mode selection."""
@@ -637,6 +642,15 @@ class VocabGameGUI:
         self.incorrect_answers = []
         self.animating = False
         self.game_over = False
+    
+    def retry_connection(self):
+        """Retry connecting to Anki deck."""
+        self.loading_error = None
+        self.loading_status = "Initializing..."
+        self.loading_deck = True
+        self.state = STATE_LOADING
+        loading_thread = threading.Thread(target=self._load_deck, daemon=True)
+        loading_thread.start()
     
     def pause_game(self):
         """Pause the current game."""
@@ -1381,10 +1395,19 @@ class VocabGameGUI:
                            (progress_x, bar_y, progress_width, bar_height),
                            border_radius=10)
         else:
-            # Show error and quit option
-            hint_text = "Press ESC to quit"
+            # Show retry button and quit hint
+            button_color = self.button_hover_color if self.retry_button_hover else self.button_color
+            pygame.draw.rect(self.screen, button_color, self.retry_button, border_radius=8)
+            
+            retry_text = "Retry"
+            retry_font = pygame.font.Font(None, 32)
+            retry_surface = retry_font.render(retry_text, True, self.text_color)
+            retry_rect = retry_surface.get_rect(center=self.retry_button.center)
+            self.screen.blit(retry_surface, retry_rect)
+            
+            hint_text = "Press ESC to quit or R to retry"
             hint_surface = self.meaning_font.render(hint_text, True, self.gray_color)
-            hint_rect = hint_surface.get_rect(center=(self.width // 2, self.height // 2 + 80))
+            hint_rect = hint_surface.get_rect(center=(self.width // 2, self.height // 2 + 150))
             self.screen.blit(hint_surface, hint_rect)
     
     def draw_loading_save(self):
@@ -2036,6 +2059,8 @@ class VocabGameGUI:
                     if self.state == STATE_LOADING and self.loading_error:
                         if event.key == pygame.K_ESCAPE:
                             running = False
+                        elif event.key == pygame.K_r:
+                            self.retry_connection()
                     elif self.state == STATE_PAUSED:
                         if event.key == pygame.K_ESCAPE or event.key == pygame.K_SPACE:
                             self.resume_game()
@@ -2095,7 +2120,10 @@ class VocabGameGUI:
     
     def handle_mouse_click(self, pos):
         """Handle mouse clicks based on current state."""
-        if self.state == STATE_MENU:
+        if self.state == STATE_LOADING and self.loading_error:
+            if self.retry_button.collidepoint(pos):
+                self.retry_connection()
+        elif self.state == STATE_MENU:
             if self.play_button.collidepoint(pos):
                 self.start_game()
             elif self.has_save_file() and self.resume_game_button.collidepoint(pos):
@@ -2142,7 +2170,10 @@ class VocabGameGUI:
     
     def update_button_hover(self, pos):
         """Update button hover states based on mouse position."""
-        if self.state == STATE_MENU:
+        if self.state == STATE_LOADING and self.loading_error:
+            self.retry_button_hover = self.retry_button.collidepoint(pos)
+        
+        elif self.state == STATE_MENU:
             self.play_button_hover = self.play_button.collidepoint(pos)
             self.resume_game_button_hover = self.resume_game_button.collidepoint(pos)
             self.leaderboard_button_hover = self.leaderboard_button.collidepoint(pos)
