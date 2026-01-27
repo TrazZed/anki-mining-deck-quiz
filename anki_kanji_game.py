@@ -525,10 +525,7 @@ class VocabGameGUI:
         if self.loading_deck:
             loading_thread = threading.Thread(target=self._load_deck, daemon=True)
             loading_thread.start()
-        else:
-            # Start background card loading
-            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
-            self.fetch_thread.start()
+        # Note: Card preloading will start during countdown when game begins
     
     def _preload_cards(self):
         """Background thread to preload cards from Jisho."""
@@ -601,10 +598,7 @@ class VocabGameGUI:
             
             self.loading_deck = False
             self.state = STATE_MENU
-            
-            # Start background card preloading
-            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
-            self.fetch_thread.start()
+            # Cards will be preloaded when game starts (during countdown)
             
         except Exception as e:
             self.loading_error = f"Unexpected error: {str(e)}"
@@ -629,6 +623,26 @@ class VocabGameGUI:
         """Go to mode selection."""
         self.state = STATE_MODE_SELECT
     
+    def _reset_card_state(self):
+        """Reset card loading state for a fresh game."""
+        # Stop any existing preloading thread
+        self.loading = False
+        if self.fetch_thread and self.fetch_thread.is_alive():
+            # Give thread a moment to finish
+            time.sleep(0.1)
+        
+        # Clear the ready cards queue
+        self.ready_cards = Queue()
+        
+        # Reset card index to start from beginning
+        self.current_index = 0
+        
+        # Shuffle the cards for a new game
+        random.shuffle(self.cards)
+        
+        # Clear current info
+        self.current_info = None
+    
     def start_game_with_mode(self, mode):
         """Start a new game with the selected mode."""
         self.game_mode = mode
@@ -642,6 +656,9 @@ class VocabGameGUI:
         self.incorrect_answers = []
         self.animating = False
         self.game_over = False
+        
+        # Reset card loading state for a fresh start
+        self._reset_card_state()
     
     def retry_connection(self):
         """Retry connecting to Anki deck."""
@@ -1550,7 +1567,16 @@ class VocabGameGUI:
         elapsed = pygame.time.get_ticks() - self.countdown_start
         self.countdown_number = 3 - (elapsed // 1000)
         
+        # Start preloading cards during countdown (only once)
+        if not hasattr(self, '_countdown_preload_started') or not self._countdown_preload_started:
+            self._countdown_preload_started = True
+            self.loading = True
+            self.fetch_thread = threading.Thread(target=self._preload_cards, daemon=True)
+            self.fetch_thread.start()
+            print("Started preloading cards during countdown...")
+        
         if self.countdown_number <= 0:
+            self._countdown_preload_started = False  # Reset for next time
             self.state = STATE_PLAYING
             self.load_next_word()
             return
