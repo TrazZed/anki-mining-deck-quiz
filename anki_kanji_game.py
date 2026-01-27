@@ -475,13 +475,11 @@ class VocabGameGUI:
         self.resume_game_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
         self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
-        self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
-        self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
+        self.pause_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.play_button_hover = False
         self.resume_game_button_hover = False
         self.leaderboard_button_hover = False
         self.back_button_hover = False
-        self.leave_button_hover = False
         self.pause_button_hover = False
         
         # Pause menu buttons
@@ -610,8 +608,7 @@ class VocabGameGUI:
         self.resume_game_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
         self.leaderboard_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.back_button = pygame.Rect(self.width // 2 - 100, 500, 200, 50)
-        self.leave_button = pygame.Rect(self.width - 80, 10, 70, 30)
-        self.pause_button = pygame.Rect(self.width - 160, 10, 70, 30)
+        self.pause_button = pygame.Rect(self.width - 80, 10, 70, 30)
         self.resume_button = pygame.Rect(self.width // 2 - 100, 250, 200, 60)
         self.save_quit_button = pygame.Rect(self.width // 2 - 100, 330, 200, 60)
         self.quit_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
@@ -1712,13 +1709,6 @@ class VocabGameGUI:
         pause_text_rect = pause_text.get_rect(center=self.pause_button.center)
         draw_target.blit(pause_text, pause_text_rect)
         
-        # Draw leave button
-        leave_color = self.incorrect_color if self.leave_button_hover else self.status_color
-        pygame.draw.rect(draw_target, leave_color, self.leave_button, border_radius=5)
-        leave_text = self.score_font.render("Leave", True, (255, 255, 255))
-        leave_text_rect = leave_text.get_rect(center=self.leave_button.center)
-        draw_target.blit(leave_text, leave_text_rect)
-        
         # Draw score and points - PROMINENT
         score_bg = pygame.Surface((250, 45), pygame.SRCALPHA)
         score_bg.fill((0, 0, 0, 100))
@@ -2175,8 +2165,6 @@ class VocabGameGUI:
                 self.check_answer()
             elif self.pause_button.collidepoint(pos):
                 self.pause_game()
-            elif self.leave_button.collidepoint(pos):
-                self.leave_game()
         
         elif self.state == STATE_PAUSED:
             if self.resume_button.collidepoint(pos):
@@ -2215,7 +2203,6 @@ class VocabGameGUI:
         elif self.state == STATE_PLAYING:
             self.button_hover = self.button_rect.collidepoint(pos)
             self.pause_button_hover = self.pause_button.collidepoint(pos)
-            self.leave_button_hover = self.leave_button.collidepoint(pos)
         
         elif self.state == STATE_PAUSED:
             self.resume_button_hover = self.resume_button.collidepoint(pos)
