@@ -248,13 +248,13 @@ def generate_sound(frequency, duration=0.1):
     except:
         return None
 
-def save_score_to_csv(score, total, points, percentage, avg_points):
+def save_score_to_csv(score, total, points, percentage, avg_points, mode='normal'):
     """Save the game score to a CSV file."""
     filename = "vocab_game_scores.csv"
     file_exists = os.path.isfile(filename)
     
     with open(filename, 'a', newline='', encoding='utf-8') as csvfile:
-        fieldnames = ['date', 'time', 'score', 'total', 'percentage', 'points', 'avg_points']
+        fieldnames = ['date', 'time', 'score', 'total', 'percentage', 'points', 'avg_points', 'mode']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         
         if not file_exists:
@@ -268,28 +268,44 @@ def save_score_to_csv(score, total, points, percentage, avg_points):
             'total': total,
             'percentage': percentage,
             'points': points,
-            'avg_points': avg_points
+            'avg_points': avg_points,
+            'mode': mode
         })
 
 def get_high_scores():
-    """Get the top 5 high scores from CSV."""
+    """Get the top 5 high scores from CSV, separated by mode."""
     filename = "vocab_game_scores.csv"
     if not os.path.isfile(filename):
-        return []
+        return {'normal': [], 'time_attack': []}
     
-    scores = []
+    normal_scores = []
+    time_attack_scores = []
+    
     with open(filename, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            scores.append({
+            score_data = {
                 'date': row['date'],
                 'points': int(row['points']),
-                'percentage': int(row['percentage'])
-            })
+                'percentage': int(row['percentage']),
+                'score': int(row['score']),
+                'total': int(row['total'])
+            }
+            # Handle old CSV files without mode column
+            mode = row.get('mode', 'normal')
+            if mode == 'time_attack':
+                time_attack_scores.append(score_data)
+            else:
+                normal_scores.append(score_data)
     
     # Sort by points descending
-    scores.sort(key=lambda x: x['points'], reverse=True)
-    return scores[:5]
+    normal_scores.sort(key=lambda x: x['points'], reverse=True)
+    time_attack_scores.sort(key=lambda x: x['points'], reverse=True)
+    
+    return {
+        'normal': normal_scores[:5],
+        'time_attack': time_attack_scores[:5]
+    }
 
 def get_jisho_info(word):
     """
@@ -1175,8 +1191,8 @@ class VocabGameGUI:
         percentage = int(self.score / self.total * 100) if self.total > 0 else 0
         avg_points = int(self.points / self.total) if self.total > 0 else 0
         
-        # Save score to CSV
-        save_score_to_csv(self.score, self.total, self.points, percentage, avg_points)
+        # Save score to CSV with game mode
+        save_score_to_csv(self.score, self.total, self.points, percentage, avg_points, self.game_mode)
         
         # Delete save file when game completes naturally
         self.delete_save_file()
@@ -1632,36 +1648,73 @@ class VocabGameGUI:
         self.screen.blit(ready_text, ready_rect)
     
     def draw_leaderboard(self):
-        """Draw the leaderboard screen."""
+        """Draw the leaderboard screen with two sections."""
         self.screen.fill(self.bg_color)
         
         # Title
         title_font = pygame.font.Font(None, 48)
         title = title_font.render("Leaderboard", True, (255, 215, 0))
-        title_rect = title.get_rect(center=(self.width // 2, 50))
+        title_rect = title.get_rect(center=(self.width // 2, 40))
         self.screen.blit(title, title_rect)
         
-        # Get and display high scores
+        # Get high scores
         if not self.high_scores:
             self.high_scores = get_high_scores()
         
-        if self.high_scores:
-            y_start = 120
-            for i, hs in enumerate(self.high_scores[:10], 1):
-                # Rank
+        # Left section - Normal/Fast Mode
+        left_x = 50
+        section_title_font = pygame.font.Font(None, 32)
+        
+        normal_title = section_title_font.render("Normal / Fast Mode", True, self.button_color)
+        normal_title_rect = normal_title.get_rect(x=left_x, y=90)
+        self.screen.blit(normal_title, normal_title_rect)
+        
+        normal_scores = self.high_scores.get('normal', [])
+        if normal_scores:
+            y_start = 130
+            for i, hs in enumerate(normal_scores[:5], 1):
                 rank_color = self.correct_color if i <= 3 else self.text_color
                 rank_text = f"{i}."
-                rank_surface = self.meaning_font.render(rank_text, True, rank_color)
-                self.screen.blit(rank_surface, (100, y_start + i * 35))
+                rank_surface = self.score_font.render(rank_text, True, rank_color)
+                self.screen.blit(rank_surface, (left_x, y_start + i * 45))
                 
-                # Score details
-                score_text = f"{hs['points']} pts  |  {hs['percentage']}%  |  {hs['date']}"
-                score_surface = self.meaning_font.render(score_text, True, self.text_color)
-                self.screen.blit(score_surface, (140, y_start + i * 35))
+                score_text = f"{hs['points']} pts | {hs['percentage']}%"
+                score_surface = self.score_font.render(score_text, True, self.text_color)
+                self.screen.blit(score_surface, (left_x + 30, y_start + i * 45))
+                
+                date_text = f"{hs['date']}"
+                date_surface = self.score_font.render(date_text, True, self.gray_color)
+                self.screen.blit(date_surface, (left_x + 30, y_start + i * 45 + 18))
         else:
-            no_scores = self.meaning_font.render("No scores yet. Play to set a record!", True, self.gray_color)
-            no_scores_rect = no_scores.get_rect(center=(self.width // 2, 200))
-            self.screen.blit(no_scores, no_scores_rect)
+            no_scores = self.score_font.render("No scores yet!", True, self.gray_color)
+            self.screen.blit(no_scores, (left_x, 150))
+        
+        # Right section - Time Attack Mode
+        right_x = self.width // 2 + 20
+        
+        ta_title = section_title_font.render("⏱ Time Attack", True, (255, 140, 0))
+        ta_title_rect = ta_title.get_rect(x=right_x, y=90)
+        self.screen.blit(ta_title, ta_title_rect)
+        
+        time_attack_scores = self.high_scores.get('time_attack', [])
+        if time_attack_scores:
+            y_start = 130
+            for i, hs in enumerate(time_attack_scores[:5], 1):
+                rank_color = self.correct_color if i <= 3 else self.text_color
+                rank_text = f"{i}."
+                rank_surface = self.score_font.render(rank_text, True, rank_color)
+                self.screen.blit(rank_surface, (right_x, y_start + i * 45))
+                
+                score_text = f"{hs['score']}/{hs['total']} | {hs['points']} pts"
+                score_surface = self.score_font.render(score_text, True, self.text_color)
+                self.screen.blit(score_surface, (right_x + 30, y_start + i * 45))
+                
+                date_text = f"{hs['date']}"
+                date_surface = self.score_font.render(date_text, True, self.gray_color)
+                self.screen.blit(date_surface, (right_x + 30, y_start + i * 45 + 18))
+        else:
+            no_scores = self.score_font.render("No scores yet!", True, self.gray_color)
+            self.screen.blit(no_scores, (right_x, 150))
         
         # Back button
         back_color = self.button_hover_color if self.back_button_hover else self.button_color
@@ -1936,7 +1989,13 @@ class VocabGameGUI:
             hs_title = self.meaning_font.render("🏆 High Scores 🏆", True, (255, 215, 0))
             self.screen.blit(hs_title, hs_title.get_rect(center=(self.width // 2, hs_y)))
             
-            for i, hs in enumerate(self.high_scores[:3], 1):
+            # Get the appropriate high scores list based on current game mode
+            if self.game_mode == 'time_attack':
+                scores_list = self.high_scores.get('time_attack', [])
+            else:
+                scores_list = self.high_scores.get('normal', [])
+            
+            for i, hs in enumerate(scores_list[:3], 1):
                 hs_text = f"{i}. {hs['points']} pts ({hs['percentage']}%) - {hs['date']}"
                 hs_surface = self.meaning_font.render(hs_text, True, self.text_color)
                 hs_rect = hs_surface.get_rect(center=(self.width // 2, hs_y + 25 + i * 25))
