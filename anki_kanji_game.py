@@ -376,7 +376,12 @@ class VocabGameGUI:
         self.high_scores = []
         self.countdown_start = 0
         self.countdown_number = 3
-        self.game_mode = 'normal'  # 'normal' or 'fast'
+        self.game_mode = 'normal'  # 'normal', 'fast', or 'time_attack'
+        
+        # Time attack mode variables
+        self.time_attack_duration = 60  # 60 seconds
+        self.time_attack_start_time = 0
+        self.time_attack_paused_elapsed = 0  # Time elapsed before pause
         
         # Word zoom animation
         self.word_zoom = 0.2  # 0.0 to 1.0
@@ -497,8 +502,10 @@ class VocabGameGUI:
         # Mode selection buttons
         self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
         self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
+        self.time_attack_button = pygame.Rect(self.width // 2 - 100, 360, 200, 80)
         self.normal_mode_hover = False
         self.fast_mode_hover = False
+        self.time_attack_hover = False
         
         # Review screen scroll
         self.review_scroll = 0
@@ -614,6 +621,7 @@ class VocabGameGUI:
         self.quit_button = pygame.Rect(self.width // 2 - 100, 410, 200, 60)
         self.normal_mode_button = pygame.Rect(self.width // 2 - 220, 250, 200, 80)
         self.fast_mode_button = pygame.Rect(self.width // 2 + 20, 250, 200, 80)
+        self.time_attack_button = pygame.Rect(self.width // 2 - 100, 360, 200, 80)
         self.retry_button = pygame.Rect(self.width // 2 - 100, self.height // 2 + 80, 200, 50)
     
     def start_game(self):
@@ -648,6 +656,11 @@ class VocabGameGUI:
         self.countdown_number = 3
         self.score = 0
         self.points = 0
+        
+        # Initialize time attack timer
+        if mode == 'time_attack':
+            self.time_attack_start_time = 0  # Will be set after countdown
+            self.time_attack_paused_elapsed = 0
         self.total = 0
         self.streak = 0
         self.incorrect_answers = []
@@ -671,6 +684,11 @@ class VocabGameGUI:
         if self.question_start_time:
             # Save elapsed time before pausing
             self.paused_time_elapsed = time.time() - self.question_start_time
+        
+        # Track time attack elapsed time when pausing
+        if self.game_mode == 'time_attack' and self.time_attack_start_time > 0:
+            self.time_attack_paused_elapsed = (pygame.time.get_ticks() - self.time_attack_start_time) / 1000.0
+        
         self.state = STATE_PAUSED
     
     def resume_game(self):
@@ -678,6 +696,12 @@ class VocabGameGUI:
         if self.question_start_time:
             # Restore the timer by adjusting start time
             self.question_start_time = time.time() - self.paused_time_elapsed
+        
+        # Resume time attack timer
+        if self.game_mode == 'time_attack' and self.time_attack_paused_elapsed > 0:
+            self.time_attack_start_time = pygame.time.get_ticks() - int(self.time_attack_paused_elapsed * 1000)
+            self.time_attack_paused_elapsed = 0
+        
         self.state = STATE_PLAYING
     
     def save_game(self):
@@ -1096,8 +1120,8 @@ class VocabGameGUI:
         if not self.animating:
             return
         
-        # Fast mode: skip all animations and go straight to next word
-        if self.game_mode == 'fast':
+        # Fast mode and time attack: skip all animations and go straight to next word
+        if self.game_mode == 'fast' or self.game_mode == 'time_attack':
             self.next_word()
             return
         
@@ -1333,6 +1357,19 @@ class VocabGameGUI:
         fast_desc2 = self.score_font.render("Instant next word", True, (255, 255, 255))
         fast_desc2_rect = fast_desc2.get_rect(center=(self.fast_mode_button.centerx, self.fast_mode_button.centery + 28))
         self.screen.blit(fast_desc2, fast_desc2_rect)
+        
+        # Time Attack mode button
+        time_attack_color = self.button_hover_color if self.time_attack_hover else (255, 140, 0)  # Orange
+        pygame.draw.rect(self.screen, time_attack_color, self.time_attack_button, border_radius=10)
+        ta_title = pygame.font.Font(None, 36).render("⏱ Time Attack", True, (255, 255, 255))
+        ta_title_rect = ta_title.get_rect(center=(self.time_attack_button.centerx, self.time_attack_button.centery - 15))
+        self.screen.blit(ta_title, ta_title_rect)
+        ta_desc = self.score_font.render("60 seconds", True, (255, 255, 255))
+        ta_desc_rect = ta_desc.get_rect(center=(self.time_attack_button.centerx, self.time_attack_button.centery + 10))
+        self.screen.blit(ta_desc, ta_desc_rect)
+        ta_desc2 = self.score_font.render("Get as many as you can!", True, (255, 255, 255))
+        ta_desc2_rect = ta_desc2.get_rect(center=(self.time_attack_button.centerx, self.time_attack_button.centery + 28))
+        self.screen.blit(ta_desc2, ta_desc2_rect)
         
         # Back button
         back_color = self.button_hover_color if self.back_button_hover else self.status_color
@@ -1575,6 +1612,9 @@ class VocabGameGUI:
         if self.countdown_number <= 0:
             self._countdown_preload_started = False  # Reset for next time
             self.state = STATE_PLAYING
+            # Start time attack timer when entering playing state
+            if self.game_mode == 'time_attack':
+                self.time_attack_start_time = pygame.time.get_ticks()
             self.load_next_word()
             return
         
@@ -1701,6 +1741,36 @@ class VocabGameGUI:
         # Draw active particles
         for particle in self.particles:
             particle.draw(draw_target)
+        
+        # Draw timer for time attack mode
+        if self.game_mode == 'time_attack' and self.time_attack_start_time > 0:
+            elapsed_time = (pygame.time.get_ticks() - self.time_attack_start_time) / 1000.0
+            time_remaining = max(0, self.time_attack_duration - elapsed_time)
+            
+            # Color changes based on time remaining
+            if time_remaining > 30:
+                timer_color = self.correct_color
+            elif time_remaining > 10:
+                timer_color = (255, 215, 0)  # Yellow/gold
+            else:
+                timer_color = self.incorrect_color
+            
+            # Format time as MM:SS
+            minutes = int(time_remaining // 60)
+            seconds = int(time_remaining % 60)
+            timer_text = f"{minutes:01d}:{seconds:02d}"
+            
+            # Draw timer background
+            timer_bg = pygame.Surface((120, 50), pygame.SRCALPHA)
+            timer_bg.fill((0, 0, 0, 120))
+            timer_bg_rect = timer_bg.get_rect(center=(self.width // 2, 25))
+            draw_target.blit(timer_bg, timer_bg_rect)
+            
+            # Draw timer text
+            timer_font = pygame.font.Font(None, 48)
+            timer_surface = timer_font.render(timer_text, True, timer_color)
+            timer_rect = timer_surface.get_rect(center=(self.width // 2, 25))
+            draw_target.blit(timer_surface, timer_rect)
         
         # Draw pause button
         pause_color = self.button_hover_color if self.pause_button_hover else self.button_color
@@ -2116,6 +2186,13 @@ class VocabGameGUI:
                 elif event.type == pygame.MOUSEMOTION:
                     self.update_button_hover(event.pos)
             
+            # Check for time attack mode expiration
+            if self.state == STATE_PLAYING and self.game_mode == 'time_attack' and self.time_attack_start_time > 0:
+                elapsed_time = (pygame.time.get_ticks() - self.time_attack_start_time) / 1000.0
+                if elapsed_time >= self.time_attack_duration:
+                    # Time's up!
+                    self.show_final_score()
+            
             # Update animations
             self.update_animation()
             
@@ -2153,6 +2230,8 @@ class VocabGameGUI:
                 self.start_game_with_mode('normal')
             elif self.fast_mode_button.collidepoint(pos):
                 self.start_game_with_mode('fast')
+            elif self.time_attack_button.collidepoint(pos):
+                self.start_game_with_mode('time_attack')
             elif self.back_button.collidepoint(pos):
                 self.state = STATE_MENU
         
@@ -2195,6 +2274,7 @@ class VocabGameGUI:
         elif self.state == STATE_MODE_SELECT:
             self.normal_mode_hover = self.normal_mode_button.collidepoint(pos)
             self.fast_mode_hover = self.fast_mode_button.collidepoint(pos)
+            self.time_attack_hover = self.time_attack_button.collidepoint(pos)
             self.back_button_hover = self.back_button.collidepoint(pos)
         
         elif self.state == STATE_LEADERBOARD:
