@@ -2,6 +2,47 @@
 
 An interactive Japanese vocabulary quiz game with a beautiful GUI that connects to your Anki deck via AnkiConnect. Test your kanji reading skills with time-based scoring, streak multipliers, and visual effects!
 
+## Project Structure
+
+The project is now organized into a modular structure for better maintainability:
+
+```
+jp_vocab_game/
+├── main.py                      # Entry point - run this to start the game
+├── config.py                    # Game configuration and constants
+├── requirements.txt             # Python package dependencies
+├── README.md                    # This file
+│
+├── utils/                       # Utility modules
+│   ├── __init__.py
+│   ├── anki_api.py             # AnkiConnect API integration
+│   ├── jisho_api.py            # Jisho.org API integration
+│   ├── text_utils.py           # Text processing (romaji, HTML, etc.)
+│   └── sound_utils.py          # Sound generation
+│
+├── game/                        # Game logic
+│   ├── __init__.py
+│   └── scoring.py              # Scoring system and leaderboards
+│
+└── ui/                          # User interface components
+    ├── __init__.py
+    ├── particles.py            # Particle effects
+    ├── game_gui.py             # Main game GUI class
+    └── screens/                # Screen renderers
+        ├── __init__.py
+        ├── loading_screen.py   # Loading/saving screens
+        ├── menu_screen.py      # Menu and mode selection
+        ├── game_screen.py      # Main gameplay screen
+        ├── leaderboard_screen.py # Leaderboard display
+        └── review_screen.py    # Incorrect answers review
+```
+
+## ⚠️ Migration from Old Version
+
+The project has been refactored from a single `anki_kanji_game.py` file into the modular structure above. The old file is still present as a backup, but **you should now use `main.py` to run the game**.
+
+You can safely delete `anki_kanji_game.py` once you've confirmed the new version works correctly.
+
 ## Features
 
 ### Core Gameplay
@@ -66,16 +107,16 @@ pip install pygame requests
 
 ### 4. Configure Your Deck
 By default, the game loads the deck named "日本語::Mining". To use a different deck:
-1. Open `anki_kanji_game.py`
-2. Find line 345: `deck_name = "日本語::Mining"`
-3. Change it to your deck name (e.g., `deck_name = "Japanese::Core 2000"`)
+1. Open `config.py`
+2. Find the line: `DEFAULT_DECK_NAME = "日本語::Mining"`
+3. Change it to your deck name (e.g., `DEFAULT_DECK_NAME = "Japanese::Core 2000"`)
 
 ### 5. Run the Game
 1. Start Anki (keep it running in the background)
 2. Run the game:
 
 ```bash
-python anki_kanji_game.py
+python main.py
 ```
 
 3. Wait for the deck to load, then select your game mode and start playing!
