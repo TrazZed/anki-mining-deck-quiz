@@ -22,6 +22,7 @@ jp_vocab_game/
 │
 ├── game/                        # Game logic
 │   ├── __init__.py
+│   ├── filtering.py            # Card filtering by maturity level
 │   └── scoring.py              # Scoring system and leaderboards
 │
 └── ui/                          # User interface components
@@ -32,21 +33,17 @@ jp_vocab_game/
         ├── __init__.py
         ├── loading_screen.py   # Loading/saving screens
         ├── menu_screen.py      # Menu and mode selection
+        ├── filter_screen.py    # Card filtering screen
         ├── game_screen.py      # Main gameplay screen
         ├── leaderboard_screen.py # Leaderboard display
         └── review_screen.py    # Incorrect answers review
 ```
 
-## ⚠️ Migration from Old Version
-
-The project has been refactored from a single `anki_kanji_game.py` file into the modular structure above. The old file is still present as a backup, but **you should now use `main.py` to run the game**.
-
-You can safely delete `anki_kanji_game.py` once you've confirmed the new version works correctly.
-
 ## Features
 
 ### Core Gameplay
 - **Anki Integration**: Automatically loads kanji cards from your Anki deck (default: "日本語::Mining")
+- **Card Filtering**: Filter cards by maturity level before starting a game (New, Learning, Young, or Mature cards)
 - **Pronunciation Quiz**: Type hiragana readings for displayed kanji words
 - **Multiple Valid Readings**: Accepts all valid readings for each word via Jisho.org API
 - **Romaji Input**: Automatic romaji to hiragana conversion - type in romaji and it converts to hiragana
@@ -60,6 +57,7 @@ You can safely delete `anki_kanji_game.py` once you've confirmed the new version
 ### Game Modes
 - **Normal Mode**: Full animations and feedback with answer review
 - **Fast Mode**: Skip animations for rapid-fire practice
+- **Time Attack Mode**: 60-second challenge to answer as many cards as possible
 
 ### Visual Effects
 - **Particle Systems**: Dynamic particle effects for correct/incorrect answers
@@ -124,14 +122,22 @@ python main.py
 ## How to Play
 
 1. **Launch**: The game loads your Anki deck and filters for kanji cards
-2. **Mode Selection**: Choose Normal or Fast mode
-3. **Quiz**: A kanji word appears - type its hiragana reading
-4. **Input**: 
+2. **Card Filtering** (Optional): 
+   - Select which card maturity levels to practice:
+     - **New Cards**: Never studied before
+     - **Learning Cards**: Currently in the learning phase
+     - **Young Cards**: Review cards with interval < 21 days
+     - **Mature Cards**: Review cards with interval ≥ 21 days
+   - Leave all unchecked to practice all cards
+   - Each option shows the number of available cards
+3. **Mode Selection**: Choose Normal, Fast, or Time Attack mode
+4. **Quiz**: A kanji word appears - type its hiragana reading
+5. **Input**: 
    - Type romaji (e.g., "konnichiha" → "こんにちは")
    - Or use Japanese IME for direct hiragana input
    - Press Enter to submit
-5. **Scoring**: Faster answers = more points, build streaks for multipliers!
-6. **Review**: At game end, review all incorrect answers with meanings
+6. **Scoring**: Faster answers = more points, build streaks for multipliers!
+7. **Review**: At game end, review all incorrect answers with meanings
 
 ### Controls
 - **Enter**: Submit answer / Skip animation / Start game
@@ -141,7 +147,7 @@ python main.py
 - **Mouse Wheel**: Scroll through incorrect answers review
 
 ## Game Files
-- `anki_kanji_game.py`: Main game file
+- `main.py`: Main game file
 - `vocab_game_scores.csv`: High score history (auto-created)
 - `vocab_game_save.json`: Save file for continuing games (auto-created)
 
