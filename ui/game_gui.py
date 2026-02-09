@@ -18,7 +18,11 @@ from utils import (
     strip_html, contains_kanji, katakana_to_hiragana, 
     convert_romaji_to_hiragana, generate_sound
 )
-from game import save_score_to_csv, get_high_scores, calculate_points
+from game import (
+    save_score_to_csv, get_high_scores, calculate_points,
+    CardFilter, filter_cards_by_maturity, analyze_deck_maturity,
+    MATURITY_YOUNG, MATURITY_MATURE
+)
 from ui.particles import Particle, FireParticle, StarParticle
 
 
@@ -55,6 +59,13 @@ class VocabGameGUI:
         self.countdown_start = 0
         self.countdown_number = 3
         self.game_mode = 'normal'
+        
+        # Card filtering
+        self.card_filter = CardFilter()
+        # Set default to young and mature cards only
+        self.card_filter.set_maturity_levels([MATURITY_YOUNG, MATURITY_MATURE])
+        self.maturity_counts = None
+        self.all_cards = None  # Store all cards before filtering
         
         # Time attack mode variables
         self.time_attack_duration = TIME_ATTACK_DURATION
@@ -212,6 +223,15 @@ class VocabGameGUI:
         self.normal_mode_hover = False
         self.fast_mode_hover = False
         self.time_attack_hover = False
+        
+        # Filter screen buttons
+        self.filter_checkboxes = {}
+        self.clear_filter_button = pygame.Rect(0, 0, 0, 0)
+        self.continue_filter_button = pygame.Rect(0, 0, 0, 0)
+        self.filter_back_button = pygame.Rect(0, 0, 0, 0)
+        self.clear_filter_button_hover = False
+        self.continue_filter_button_hover = False
+        self.filter_back_button_hover = False
     
     def update_button_positions(self):
         """Update button positions based on current window size."""
@@ -261,7 +281,8 @@ class VocabGameGUI:
             cards = get_cards_info(card_ids)
             
             self.loading_status = "Filtering cards..."
-            kanji_cards = [card for card in cards if contains_kanji(card['question']) and card.get('type', 0) != 0]
+            # Only filter for kanji - don't filter by type yet (user will choose in filter screen)
+            kanji_cards = [card for card in cards if contains_kanji(card['question'])]
             
             if not kanji_cards:
                 self.loading_error = "No cards with kanji found in this deck."
@@ -269,6 +290,12 @@ class VocabGameGUI:
                 return
             
             print(f"Loaded {len(kanji_cards)} kanji cards.")
+            
+            # Store all cards and analyze maturity
+            self.all_cards = kanji_cards
+            self.maturity_counts = analyze_deck_maturity(kanji_cards)
+            print(f"Maturity distribution: {self.maturity_counts}")
+            
             random.shuffle(kanji_cards)
             
             self.cards = kanji_cards
@@ -283,7 +310,29 @@ class VocabGameGUI:
             print(self.loading_error)
     
     def start_game(self):
-        """Go to mode selection."""
+        """Go to filter selection."""
+        self.state = STATE_FILTER_SELECT
+    
+    def continue_from_filter(self):
+        """Continue from filter screen to mode selection."""
+        # Apply filters to cards if any are selected
+        if self.card_filter.is_active() and self.all_cards:
+            filtered_cards = filter_cards_by_maturity(self.all_cards, self.card_filter.maturity_levels)
+            print(f"Filtered {len(self.all_cards)} cards down to {len(filtered_cards)} cards")
+            print(f"Filter: {self.card_filter.get_summary()}")
+            
+            if len(filtered_cards) == 0:
+                print("Warning: No cards match the filter!")
+                # Keep all cards if filter results in nothing
+                self.cards = self.all_cards[:]
+            else:
+                self.cards = filtered_cards
+        else:
+            # No filter, use all cards
+            if self.all_cards:
+                self.cards = self.all_cards[:]
+        
+        # Proceed to mode selection
         self.state = STATE_MODE_SELECT
     
     def _reset_card_state(self):
@@ -746,6 +795,7 @@ class VocabGameGUI:
         from ui.screens.leaderboard_screen import draw_leaderboard
         from ui.screens.review_screen import draw_review_incorrect
         from ui.screens.loading_screen import draw_loading, draw_loading_save, draw_saving
+        from ui.screens.filter_screen import draw_filter_screen
         
         if self.state == STATE_LOADING:
             draw_loading(self)
@@ -755,6 +805,8 @@ class VocabGameGUI:
             draw_saving(self)
         elif self.state == STATE_MENU:
             draw_menu(self)
+        elif self.state == STATE_FILTER_SELECT:
+            draw_filter_screen(self)
         elif self.state == STATE_MODE_SELECT:
             draw_mode_select(self)
         elif self.state == STATE_COUNTDOWN:
@@ -893,6 +945,21 @@ class VocabGameGUI:
                 self.state = STATE_LEADERBOARD
                 self.high_scores = get_high_scores()
         
+        elif self.state == STATE_FILTER_SELECT:
+            # Check checkbox clicks
+            for level, rect in self.filter_checkboxes.items():
+                if rect.collidepoint(pos):
+                    self.card_filter.toggle_maturity_level(level)
+                    break
+            
+            # Check button clicks
+            if self.clear_filter_button.collidepoint(pos):
+                self.card_filter.clear()
+            elif self.continue_filter_button.collidepoint(pos):
+                self.continue_from_filter()
+            elif self.filter_back_button.collidepoint(pos):
+                self.state = STATE_MENU
+        
         elif self.state == STATE_MODE_SELECT:
             if self.normal_mode_button.collidepoint(pos):
                 self.start_game_with_mode('normal')
@@ -901,7 +968,7 @@ class VocabGameGUI:
             elif self.time_attack_button.collidepoint(pos):
                 self.start_game_with_mode('time_attack')
             elif self.back_button.collidepoint(pos):
-                self.state = STATE_MENU
+                self.state = STATE_FILTER_SELECT
         
         elif self.state == STATE_LEADERBOARD:
             if self.back_button.collidepoint(pos):
@@ -938,6 +1005,11 @@ class VocabGameGUI:
             self.play_button_hover = self.play_button.collidepoint(pos)
             self.resume_game_button_hover = self.resume_game_button.collidepoint(pos)
             self.leaderboard_button_hover = self.leaderboard_button.collidepoint(pos)
+        
+        elif self.state == STATE_FILTER_SELECT:
+            self.clear_filter_button_hover = self.clear_filter_button.collidepoint(pos)
+            self.continue_filter_button_hover = self.continue_filter_button.collidepoint(pos)
+            self.filter_back_button_hover = self.filter_back_button.collidepoint(pos)
         
         elif self.state == STATE_MODE_SELECT:
             self.normal_mode_hover = self.normal_mode_button.collidepoint(pos)
